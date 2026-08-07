@@ -27,6 +27,8 @@ Build a browser-based photography practice game for beginners with realistic cam
 - The wide-angle panorama safety fix, dynamic subject snapshot, photo library, camera modes, autofocus modes, lens switching, drag pan, wheel zoom, and product metadata all passed a fresh production build and 2/2 tests. `git diff --check` also passed.
 - The user explicitly authorized creating the release commit and publishing the site on 2026-08-07.
 - The first commit attempt was stopped by `git diff --cached --check` because `AGENTS.md` had an extra blank line at EOF. The whitespace issue was corrected before retrying; no commit was created by that attempt.
+- Release commit `54f4612` was created and pushed successfully to the private Sites source repository.
+- The first packaging attempt failed because Git Bash `tar` interpreted a `C:/...` archive path as a remote archive target. Retry with `/c/...` paths; the validated source and build were not changed.
 
 ## Product Scope
 
