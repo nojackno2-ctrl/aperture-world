@@ -29,6 +29,7 @@ Build a browser-based photography practice game for beginners with realistic cam
 - The first commit attempt was stopped by `git diff --cached --check` because `AGENTS.md` had an extra blank line at EOF. The whitespace issue was corrected before retrying; no commit was created by that attempt.
 - Release commit `54f4612` was created and pushed successfully to the private Sites source repository.
 - The first packaging attempt failed because Git Bash `tar` interpreted a `C:/...` archive path as a remote archive target. Retry with `/c/...` paths; the validated source and build were not changed.
+- The path issue was corrected with `/c/...` Git Bash paths. Version 1 was saved from commit `8f37f2e`, privately deployed successfully, and opened at `https://aperture-world.gjhcy4gc52.chatgpt.site` on 2026-08-07.
 
 ## Product Scope
 
@@ -41,6 +42,4 @@ Build a browser-based photography practice game for beginners with realistic cam
 
 ## Next Steps
 
-1. Commit the exact validated source.
-2. Push, package, save, and privately deploy that exact version through Sites.
-3. Record and open the deployed URL.
+1. Collect future user feedback and continue from the deployed Version 1 baseline.
