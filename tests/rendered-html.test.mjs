@@ -19,8 +19,11 @@ test("server-renders the Aperture World game", async () => {
   assert.match(html, /<title>Aperture World｜互動攝影練習場<\/title>/i);
   assert.match(html, /APERTURE WORLD/);
   assert.match(html, /山谷第一道光/);
-  assert.match(html, /相機設置/);
+  assert.match(html, /α1 曝光設置/);
   assert.match(html, /圖片庫/);
+  assert.match(html, /ILCE-1/);
+  assert.match(html, /快門類型/);
+  assert.match(html, /測光模式/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/i);
 });
 
@@ -35,8 +38,28 @@ test("finished product has no disposable starter preview", async () => {
   assert.match(page, /photo-library/);
   assert.match(page, /onPointerMove/);
   assert.match(page, /onWheel/);
+  assert.match(page, /1 \/ 32000/);
+  assert.match(page, /102400/);
+  assert.match(page, /曝光補償/);
+  assert.match(page, /MeteringMode/);
+  assert.match(page, /ShutterType/);
+  assert.match(page, /Math\.log2\(Math\.max\(24, focal\) \/ 24\)/);
+  assert.match(page, /street_subject\.png/);
+  assert.match(page, /night_subject\.png/);
+  assert.doesNotMatch(page, /(?:bird|sports|portrait)_subject\.jpg/);
   assert.match(layout, /og\.png/);
   assert.match(packageJson, /"name": "aperture-world"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  await Promise.all([
+    "bird_subject.png",
+    "sports_subject.png",
+    "portrait_subject.png",
+    "street_subject.png",
+    "night_subject.png",
+    "sports_bg_clean.png",
+    "portrait_bg_clean.png",
+    "street_bg_clean.png",
+    "night_bg_clean.png",
+  ].map(file => access(new URL(`public/scenes/${file}`, templateRoot))));
   await assert.rejects(access(new URL("../app/_sites-preview", templateRoot)));
 });
