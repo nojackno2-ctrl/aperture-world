@@ -42,6 +42,7 @@ Build a browser-based photography practice game for beginners with realistic cam
 - Artwork integration fix in progress: generated and alpha-validated transparent PNG subjects for bird, sports, portrait, street, and night scenes; created clean subject-free backgrounds for portrait, street, and night; removed real Olympic/Tokyo branding from the sports background; changed focal-length rendering to a bounded logarithmic visual zoom; reduced wide-angle pan limits; and added independent street/night subject animation. Live and captured visual verification still pending.
 - First post-artwork production build succeeded. The first product-test run passed server rendering but failed the new asset-existence assertion because its test URL incorrectly traversed one directory above the project (`../public` relative to an already-rooted base). The test path was corrected to `public/scenes`; product behavior was not implicated. Fresh validation pending.
 - Artwork integration completed and verified on 2026-08-07. Fresh production build and 2/2 product tests passed; `git diff --check` passed; all five subject assets were verified as RGBA with alpha extrema 0–255; live visual review confirmed no white cards or visible green fringe; sports captured playback froze the subject and applied the calculated background blur; and geometric browser checks confirmed bird, sports, portrait, street, and night subject bounds all remained inside the viewfinder at the tested state.
+- The user authorized the online update. Release commit `6e4cac1` was pushed, Sites version 2 was saved from that exact commit, and the private production deployment succeeded at `https://aperture-world.gjhcy4gc52.chatgpt.site` on 2026-08-07.
 
 ## Product Scope
 
@@ -54,5 +55,5 @@ Build a browser-based photography practice game for beginners with realistic cam
 
 ## Next Steps
 
-1. Ask for user feedback on the corrected layered artwork.
-2. Ask for release authorization before committing and updating the private deployment.
+1. Collect user feedback on the deployed corrected layered artwork.
+2. Keep future visual changes within the layered-artwork and verified camera-behavior constraints above.
