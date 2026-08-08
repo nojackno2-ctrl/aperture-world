@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 type Props = {
-  image: string;
+  image: string | Blob;
 };
 
 type Mode = "all" | "luminance" | "channels";
@@ -16,7 +16,8 @@ export function Histogram({ image }: Props) {
   useEffect(() => {
     let canceled = false;
     const img = new Image();
-    img.src = image;
+    const objectUrl = image instanceof Blob ? URL.createObjectURL(image) : null;
+    img.src = typeof image === "string" ? image : objectUrl!;
 
     img.onload = () => {
       if (canceled) return;
@@ -147,6 +148,8 @@ export function Histogram({ image }: Props) {
 
     return () => {
       canceled = true;
+      img.onload = null;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [image, mode]);
 

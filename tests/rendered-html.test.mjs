@@ -13,7 +13,23 @@ async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
-  return worker.fetch(new Request("http://localhost/", { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
+  return worker.fetch(
+    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    {
+      ASSETS: {
+        fetch: async (req) => {
+          try {
+            const u = new URL(req.url);
+            const data = await readFile(new URL(`../dist/client${u.pathname === "/" ? "/index.html" : u.pathname}`, import.meta.url));
+            return new Response(data, { status: 200, headers: { "content-type": "text/html" } });
+          } catch {
+            return new Response("Not found", { status: 404 });
+          }
+        }
+      }
+    },
+    { waitUntil() {}, passThroughOnException() {} }
+  );
 }
 
 test("server-renders the Aperture World game", async () => {
@@ -28,9 +44,9 @@ test("server-renders the Aperture World game", async () => {
   assert.match(html, /鏡頭與測光/);
   assert.match(html, /相片庫/);
   assert.match(html, /aria-label="曝光控制"/);
-  assert.match(html, />快門</);
-  assert.match(html, />光圈</);
-  assert.match(html, />曝光值</);
+  assert.match(html, /aria-label="快門 1\//);
+  assert.match(html, /aria-label="光圈 F/);
+  assert.match(html, /aria-label="曝光值 /);
   assert.doesNotMatch(html, /CAM-PRO 1|教練筆記|訓練路線|動態清晰|景深充足/);
   assert.match(html, /ISO AUTO/);
   assert.match(html, /測光模式/);
@@ -53,16 +69,55 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /className="library-button"/);
   assert.match(page, /className="photo-icon"/);
   assert.match(page, /className="camera-dock"[\s\S]*className="shutter-button"[\s\S]*className="dock-readout"[\s\S]*className="library-button"/);
+  const dockMarkup = page.slice(page.indexOf('<div className="dock-readout"'), page.indexOf('</div>', page.indexOf('<div className="dock-readout"')));
+  assert.doesNotMatch(dockMarkup, /<small>|>快門<|>光圈<|>ISO<|>曝光值</, "bottom exposure controls show only their enlarged values");
+  assert.match(dockMarkup, /activateControl\("shutter"\)[\s\S]*activateControl\("aperture"\)[\s\S]*activateControl\("exposure"\)[\s\S]*activateControl\("iso"\)/, "exposure compensation appears before ISO in the bottom dock");
+  assert.match(page, /\["shutter", "aperture", "exposure", "iso"\] as MobileControl\[\]/, "mobile quick controls use the same exposure-compensation-before-ISO order");
+  assert.match(styles, /\.dock-readout\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*width:100%/, "desktop exposure values must spread evenly across the bottom");
+  assert.match(styles, /\.dock-readout b\{[^}]*clamp\(46px,4vw,64px\)/, "desktop exposure values must use the large, glance-readable type scale");
   assert.match(page, /className="gallery"/);
+  assert.match(page, /className="gallery-panel"/);
+  assert.match(page, /aria-modal="true"/);
+  assert.match(page, /aria-label="上一張照片"/);
+  assert.match(page, /aria-label="下一張照片"/);
+  assert.match(page, /e\.code === "ArrowLeft"/);
+  assert.match(page, /e\.code === "ArrowRight"/);
   assert.match(page, /className="exposure-scale"/);
-  assert.match(page, /onPointerMove=\{event => \{/);
+  assert.match(page, /onWheelCapture=\{event => \{/);
+  assert.match(page, /setActiveValue\(activeIndex \+ \(event\.deltaY > 0 \? -1 : 1\)\)/, "the mouse wheel changes the active exposure value one step at a time");
+  assert.doesNotMatch(page, /className="exposure-scale"[\s\S]{0,250}onPointerMove/, "horizontal mouse movement must not change exposure values");
+  assert.match(page, /const SHUTTER_SCALE_OPTIONS = \[\.\.\.SHUTTERS\]\.reverse\(\)/, "shutter scale runs from slow on the left to fast on the right");
+  assert.match(page, /const ISO_SCALE_OPTIONS = \[ISO_AUTO_SCALE_VALUE, \.\.\.ISOS\]/, "ISO AUTO is the leftmost scale position");
+  assert.match(page, /value === ISO_AUTO_SCALE_VALUE \? "AUTO"/, "the ISO scale renders its leftmost automatic value clearly");
   assert.match(page, /activateControl\("shutter"\)/);
   assert.match(page, /activateControl\("aperture"\)/);
   assert.match(page, /activateControl\("iso"\)/);
   assert.match(page, /activateControl\("exposure"\)/);
-  const captureBody = page.slice(page.indexOf("const capture = useCallback"), page.indexOf("useEffect(() => {", page.indexOf("const capture = useCallback")));
+  assert.match(page, /confirmingControlRef/);
+  assert.match(page, /onPointerDownCapture=\{event => \{/);
+  assert.match(page, /event\.pointerType !== "mouse" \|\| event\.button !== 0/);
+  assert.match(page, /confirmingControlRef\.current = true[\s\S]*setActiveControl\(null\)/, "left click confirms the active exposure value and closes its scale");
+  assert.match(page, /className="focal-scale"[\s\S]*className="scale-heading"[\s\S]*\{focal\}\s*mm[\s\S]*className="scale-track"/, "focal length is displayed at the top with a scale and ruler");
+  assert.match(styles, /\.focal-scale\{[^}]*cursor:ns-resize/);
+  assert.match(styles, /\.focal-scale \.scale-heading b\{[^}]*var\(--font-geist-mono\)/);
+  assert.match(styles, /\.exposure-scale\{[^}]*cursor:ns-resize/);
+  assert.match(page, /shutter: mode === "S" \|\| mode === "M"/);
+  assert.match(page, /aperture: mode === "A" \|\| mode === "M"/);
+  assert.match(page, /exposure: mode !== "AUTO" && \(mode !== "M" \|\| usingAutoIso\)/);
+  assert.match(page, /iso: mode !== "AUTO"/);
+  const activateControlBody = page.slice(page.indexOf("const activateControl"), page.indexOf("const activeOptions"));
+  assert.match(activateControlBody, /if \(!controlAvailability\[control\]\) return/);
+  assert.doesNotMatch(activateControlBody, /setMode\(/, "selecting a parameter must never change the exposure mode");
+  assert.match(page, /disabled=\{!controlAvailability\.shutter\}/);
+  assert.match(page, /disabled=\{!controlAvailability\.aperture\}/);
+  assert.match(page, /disabled=\{!controlAvailability\.exposure\}/);
+  assert.match(page, /disabled=\{!controlAvailability\.iso\}/);
+  assert.match(styles, /\.dock-readout button:disabled\{[^}]*cursor:not-allowed[^}]*opacity:\.28/);
+  const captureBody = page.slice(page.indexOf("const capture = useCallback"), page.indexOf("const showPhoto", page.indexOf("const capture = useCallback")));
   assert.doesNotMatch(captureBody, /setResult\(/, "taking a photo must not open playback");
-  assert.match(captureBody, /setShots\(/, "taking a photo must still save it to the library");
+  assert.match(captureBody, /pendingRef\.current\.push\(/, "taking a photo must enqueue it in the write-out buffer");
+  assert.match(page, /if \(photo\) setShots\(prev => \[photo, \.\.\.prev\]\)/, "the write-out drain must still save queued photos to the library");
+  assert.doesNotMatch(captureBody, /slice\(0,\s*12\)/, "the library must not discard photos after the twelfth shot");
   assert.match(page, /onPointerMove/);
   assert.match(page, /onWheel/);
   assert.match(page, /1 \/ 32000/);
@@ -72,21 +127,94 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /isoAuto/);
   assert.match(page, /ISO AUTO/);
   assert.match(page, /useState<Mode>\("P"\)/);
+  assert.match(page, /\[isoAuto, setIsoAuto\] = useState\(true\)/, "the game starts in P mode with automatic ISO enabled");
+  assert.doesNotMatch(page, /ShutterType|shutter-type-buttons|機械快門|電子快門/);
   assert.doesNotMatch(page, /ShutterType|shutter-type-buttons|機械快門|電子快門/);
   assert.match(page, /className="mobile-console"/);
   assert.match(page, /requestFullscreen/);
   assert.match(page, /fullscreenchange/);
-  assert.match(page, /<Histogram image=\{result\.image\}/);
+  assert.match(page, /<Histogram image=\{viewedBlob\}/);
   assert.match(styles, /\.playback-histogram/);
   assert.match(styles, /\.exposure-scale\{[^}]*background:transparent[^}]*box-shadow:none/);
-  assert.match(styles, /\.camera-dock\{[^}]*background:transparent[^}]*box-shadow:none/);
-  assert.match(styles, /\.shutter-button\{[^}]*top:50%[^}]*background:#260706/);
   assert.match(styles, /\.library-button\{[^}]*bottom:max\(/);
+  assert.match(page, /className="gear-button"/);
+  assert.match(page, /className="gear-icon"/);
+  assert.match(page, /aria-label="相機鏡頭與測光設定"/);
+  assert.match(page, /aria-label="更換鏡頭"/);
+  assert.match(page, /aria-label="測光模式"/);
+  assert.match(page, /24–70 mm F2\.8 標準變焦/);
+  assert.match(page, /70–200 mm F2\.8 遠攝變焦/);
+  assert.match(page, /200–600 mm F5\.6–6\.3 超遠攝變焦/);
+  assert.match(page, /400–800 mm F6\.3–8\.0 超遠攝變焦/);
+  assert.match(page, /value="multi".*多重測光/s);
+  assert.match(page, /value="center".*中央偏重/s);
+  assert.match(page, /value="spot".*定點/s);
+  assert.match(page, /value="average".*全螢幕平均/s);
+  assert.match(page, /value="highlight".*高光/s);
+  assert.match(styles, /\.gear-button\{[^}]*left:max\(22px/);
+  assert.match(styles, /\.gear-button[^}]*border-radius:50%/);
   assert.match(styles, /\.mobile-console\{[^}]*background:transparent[^}]*box-shadow:none/);
   assert.match(styles, /\.mobile-shutter i\{[^}]*#ff5a54[^}]*#c9151b/);
+  assert.match(styles, /\.gallery\{[^}]*background:rgba\(3,5,4,\.52\)/);
+  assert.match(styles, /\.gallery-panel\{[^}]*background:rgba\(8,12,10,\.78\)/);
+  assert.match(styles, /\.gallery\{[^}]*padding:clamp\(12px,1\.5vw,24px\)/, "the photo library keeps only a narrow viewport margin");
+  assert.match(styles, /\.gallery-panel\{[^}]*width:100%[^}]*height:100%/, "the photo library fills nearly the entire viewport");
+  assert.doesNotMatch(styles, /\.gallery-panel\{[^}]*(?:1180px|max-height)/, "the desktop photo library must not be constrained to a small modal");
+  assert.match(styles, /\.gallery-viewer\{[^}]*height:100%[^}]*min-height:0/, "photo review fills the library below its header");
+  assert.match(styles, /\.photo-nav-previous\{[^}]*left:18px/);
+  assert.match(styles, /\.photo-nav-next\{[^}]*right:18px/);
+  assert.match(page, /deletePhoto/, "photo gallery includes photo deletion support");
+  assert.match(page, /aria-label="刪除照片"/);
+  assert.match(page, /className="gallery-card-delete"/);
+  assert.match(page, /e\.code === "Delete" \|\| e\.code === "Backspace"/, "supports Delete/Backspace keyboard shortcut to delete photos");
+  assert.match(styles, /\.gallery-card-delete/);
+  // The single-photo viewer gives the image its own uncluttered column; EXIF,
+  // histogram, and the frame id live in a dedicated sidebar instead of being
+  // stacked on top of the photo, and the delete action isn't duplicated there.
+  assert.match(page, /className="viewer-stage"/);
+  assert.match(page, /className="viewer-sidebar"/);
+  assert.match(page, /className="viewer-frame-id"/);
+  assert.doesNotMatch(page, /className="viewer-delete-btn"/, "the viewer no longer duplicates the header's delete button");
+  assert.match(styles, /\.gallery-viewer\{[^}]*grid-template-columns/, "wide screens split the viewer into a photo column and an info sidebar");
+  assert.match(styles, /\.viewer-stage \.playback-photo\{[^}]*object-fit:contain/, "the photo is letterboxed, never cropped, in its own stage");
+
+  // Exposure countdown HUD & motion trail trajectory during long exposures
+  assert.match(page, /exposure-countdown-hud/, "exposing countdown HUD is rendered during exposure");
+  assert.match(page, /countdown-digits/, "displays large countdown digits");
+  assert.match(page, /countdown-progress-bar/, "displays real-time exposure progress bar");
+  assert.match(page, /lookTrajectory/, "tracks camera motion trajectory during exposure for light trails");
+  assert.match(styles, /\.exposure-countdown-hud/, "exposure countdown HUD styling is defined");
+  assert.match(styles, /\.countdown-digits/, "countdown digit typography is styled");
+
+  // Drive modes (連拍/過片模式) and buffer memory HUD
+  assert.match(page, /DRIVE_MODES/, "defines drive mode options");
+  assert.match(page, /單張拍攝|高速連拍|中速連拍|低速連拍/, "includes Sony a1-style drive modes");
+  assert.match(page, /className="drive-strip/, "renders drive mode strip in the HUD top");
+  assert.match(page, /className="drive-section/, "renders drive mode section in the parameter deck");
+  assert.match(page, /className="mobile-drive-strip/, "renders mobile drive mode selector");
+  assert.match(page, /className=\{`buffer-gauge/, "renders the burst buffer gauge");
+  assert.match(page, /className=\{`card-gauge/, "renders the memory-card frame counter");
+  assert.match(page, /startBurst/, "supports continuous burst shooting");
+  assert.match(page, /MAX_BUFFER/, "implements realistic buffer capacity limit");
+  assert.match(page, /e\.code === "KeyD"/, "supports D keyboard shortcut to cycle drive modes");
+  assert.match(styles, /\.drive-strip/, "drive strip is styled in CSS");
+  assert.match(styles, /\.buffer-gauge/, "buffer memory gauge is styled in CSS");
+  assert.match(styles, /\.drive-card-btn/, "deck drive mode cards are styled");
 
   // The live view is a WebGL first-person render, not a stack of flat artwork.
   assert.match(page, /<Viewport3D ref=\{viewportRef\}/);
+  assert.match(world3d, /DirectionalLight/);
+  assert.match(world3d, /PointLight/);
+  assert.match(world3d, /userData\.lightSource = "sun"/);
+  assert.match(world3d, /visibleSun\.raycast = \(\) => \{\}/);
+  assert.match(world3d, /moon\.raycast = \(\) => \{\}/);
+  assert.match(world3d, /scene\.userData\.meteringEmitter = visibleSun/);
+  assert.match(world3d, /sourcePosition.*normalize\(\)\.multiplyScalar\(900\)/);
+  assert.match(world3d, /castShadow = true/);
+  assert.doesNotMatch(world3d, /LIGHT_CYCLES|lightExposureAt|sun\.position\.set\([^\n]*elapsed/);
+  assert.doesNotMatch(world3d, /(?:bird|sports|portrait)_subject\.jpg/);
+  for (const key of Object.keys(WORLD)) assert.match(world3d, new RegExp(`\\b${key}\\(THREE, scene\\)`), `${key} needs a 3D builder`);
+  assert.match(world3d, /mergeGeometries/);
   assert.match(page, /horizontalFieldOfView\(focal\)/);
   assert.match(page, /LOOK_LIMITS/);
 
@@ -105,7 +233,7 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(viewport, /findSubjectForHit/);
   assert.match(viewport, /mat\?\.depthWrite !== false/);
   assert.doesNotMatch(page, /scene-art|bg-art-layer|subject-art-layer|q-subject/);
-  assert.match(viewport, /import\("three"\)/);
+  assert.match(viewport, /import\("\.\/three-runtime"\)/);
   assert.match(viewport, /verticalFieldOfView\(/);
   assert.match(viewport, /depthBlurPlan\(/);
   assert.match(viewport, /onLight/);
@@ -113,8 +241,16 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(viewport, /exposureSamples\(/);
   assert.match(viewport, /toDataURL/);
   assert.match(viewport, /camera\.layers\.set\(bucket\)/);
-  assert.match(world3d, /street_subject\.png/);
-  assert.match(world3d, /night_subject\.png/);
+  // Every photographable subject is procedural 3D geometry: no flat cutouts,
+  // no canvas-painted people, no bitmap subject art anywhere in the world.
+  assert.doesNotMatch(world3d, /SUBJECT_ART|billboard\(|characterTexture|_subject\.png|_bg_clean\.png|TextureLoader/);
+  assert.doesNotMatch(world3d, /isBillboard/);
+  assert.match(world3d, /function build3DHuman\(THREE/, "people are modelled, not painted onto a plane");
+  assert.match(world3d, /build3DHuman\(THREE, \{[\s\S]*pose: "run"/, "the sprinters are posed 3D figures");
+  for (const pose of ["stand", "walk", "sit", "run"]) {
+    assert.match(world3d, new RegExp(`pose: "${pose}"`), `the human builder needs a ${pose} stance`);
+  }
+  assert.match(world3d, /HUMAN_POSES/);
   assert.match(world3d, /PerspectiveCamera|buildScene/);
   assert.match(world3d, /DirectionalLight/);
   assert.match(world3d, /PointLight/);
@@ -134,6 +270,7 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(packageJson, /"name": "aperture-world"/);
   assert.match(packageJson, /"three": "\^?0\.\d+\.\d+"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  // The 2D scene artwork was deleted with the code that drew it; nothing may ship it back.
   await Promise.all([
     "bird_subject.png",
     "sports_subject.png",
@@ -144,7 +281,17 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
     "portrait_bg_clean.png",
     "street_bg_clean.png",
     "night_bg_clean.png",
-  ].map(file => access(new URL(`public/scenes/${file}`, templateRoot))));
+    "bird_bg.jpg",
+    "bird_subject.jpg",
+    "group.jpg",
+    "landscape.jpg",
+    "night.jpg",
+    "portrait_bg.jpg",
+    "portrait_subject.jpg",
+    "sports_bg.jpg",
+    "sports_subject.jpg",
+    "street.jpg",
+  ].map(file => assert.rejects(access(new URL(`public/scenes/${file}`, templateRoot)), `public/scenes/${file} must be gone`)));
   await assert.rejects(access(new URL("../app/_sites-preview", templateRoot)));
 });
 
@@ -193,6 +340,64 @@ test("the live renderer targets 120 FPS with a bounded adaptive GPU resolution",
   assert.match(viewport, /dataset\.fps/);
   assert.match(viewport, /dataset\.gpu/);
   assert.match(world3d, /mergeGeometries/);
+});
+
+test("idle work, GPU resources, capture memory, network caching, and unused starter capabilities stay bounded", async () => {
+  const [page, histogram, viewport, lifecycle, threeRuntime, world3d, packageJson, packageLock, nextConfig, worker] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/histogram.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/three-lifecycle.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/three-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
+    readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /const CARD_CAPACITY = 2000/);
+  assert.match(page, /reservedFramesRef\.current >= CARD_CAPACITY/, "the card must reserve asynchronous encodes before accepting another frame");
+  assert.match(page, /bufferDecayRef\.current >= MAX_BUFFER/, "encoding and queued frames must both count against the 300-frame buffer");
+  assert.match(page, /image: Blob;/, "captured photos own their pixel data as a Blob, not a long-lived object URL");
+  assert.match(page, /URL\.createObjectURL\(blob\)/, "the viewer mints an object URL from only the shown photo's Blob");
+  assert.match(page, /return \(\) => URL\.revokeObjectURL\(url\)/, "the viewer's object URL is revoked with its committed image element");
+  assert.match(histogram, /image instanceof Blob \? URL\.createObjectURL\(image\) : null/, "histogram analysis also accepts the selected Blob without retaining card-wide URLs");
+  assert.match(histogram, /URL\.revokeObjectURL\(objectUrl\)/, "the histogram releases its temporary analysis URL");
+  assert.match(page, /loading="lazy" decoding="async"/, "the gallery grid must not decode every frame at once");
+  assert.match(page, /frozen=\{!started \|\| Boolean\(result\) \|\| libraryOpen\}/);
+  assert.doesNotMatch(page, /window\.setInterval/, "an empty buffer must not keep a permanent interval alive");
+  assert.match(page, /if \(pendingRef\.current\.length > 0\) bufferTimerRef\.current = window\.setTimeout\(drain, BUFFER_WRITE_MS\)/, "ready frames must continue draining without queue-driven timer resets");
+  assert.match(viewport, /if \(!viewRef\.current\.frozen\) scheduleFrame\(\)/, "a frozen view must stop requesting frames");
+  assert.match(viewport, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
+  assert.match(viewport, /disposeObjectTree\(engine\.built\.scene, renderer\)/);
+  assert.match(viewport, /const output = layers\[0\]/, "capture reuses a finished layer instead of allocating a fifth full-size canvas");
+  assert.match(viewport, /import\("\.\/three-runtime"\)/, "the viewport must load the curated renderer boundary");
+  assert.doesNotMatch(viewport, /await import\("three"\)|Promise\.all\(\[import\("three"\)/, "a runtime namespace import would retain Three.js APIs the scenes never use");
+  assert.match(threeRuntime, /WebGLRenderer/);
+  assert.match(lifecycle, /const geometries = new Set/);
+  assert.match(lifecycle, /const materials = new Set/);
+  assert.match(lifecycle, /const textures = new Set/);
+  assert.match(world3d, /for \(const root of subjects\)/);
+  assert.match(world3d, /rootInverse\.clone\(\)\.multiply\(mesh\.matrixWorld\)/, "rigid subjects batch in root-local coordinates");
+  assert.doesNotMatch(packageJson, /drizzle|db:generate/, "unused D1 tooling must not remain installed");
+  assert.doesNotMatch(packageLock, /drizzle|@drizzle-team/, "unused D1 tooling must not remain in the install graph");
+  assert.match(nextConfig, /\/_next\/static\/:path\*/);
+  assert.match(nextConfig, /max-age=31536000, immutable/, "content-hashed client assets should stay in the browser cache");
+  assert.match(nextConfig, /stale-while-revalidate=604800/, "the social preview should revalidate without blocking repeat requests");
+  assert.doesNotMatch(worker, /image-optimization|_vinext\/image|IMAGES/, "an unused image proxy must not inflate the Worker or require a binding");
+  await Promise.all([
+    "app/chatgpt-auth.ts",
+    "db/index.ts",
+    "db/schema.ts",
+    "drizzle.config.ts",
+    "drizzle/meta/_journal.json",
+    "examples/d1/app/api/notes/route.ts",
+    "examples/d1/db/schema.ts",
+    "public/file.svg",
+    "public/globe.svg",
+    "public/window.svg",
+  ].map(file => assert.rejects(access(new URL(`../${file}`, import.meta.url)), `${file} must be removed`)));
 });
 
 test("depth of field follows real circle-of-confusion optics", () => {
@@ -294,7 +499,8 @@ test("exposure triangle (shutter, aperture, ISO) scales photo brightness realist
   assert.ok(Math.abs(bBase - bRecip) < 1e-9, "reciprocity law: ISO gain compensated by faster shutter keeps identical brightness");
 });
 
-test("auto exposure dynamically opens aperture in low light and night scenes and scales with target EV", () => {
+test("auto exposure dynamically opens aperture in low light and night scenes and scales with target EV", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const APERTURES = [1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22];
   const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
   const closest = (values, target) => values.reduce((best, value) => Math.abs(value - target) < Math.abs(best - target) ? value : best);
@@ -325,6 +531,8 @@ test("auto exposure dynamically opens aperture in low light and night scenes and
 
   const ISOS = [50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800];
   const autoIso = (aperture, shutter, targetEv) => closest(ISOS, clamp(100 * Math.pow(2, Math.log2((aperture ** 2) / shutter) - targetEv), 100, 12800));
+  const SHUTTERS = [1 / 1000, 1 / 800, 1 / 640, 1 / 500, 1 / 400, 1 / 320, 1 / 250, 1 / 200, 1 / 160, 1 / 125, 1 / 100, 1 / 80, 1 / 60, 1 / 50, 1 / 40, 1 / 30];
+  const closestSafeShutter = (target, safeShutter) => closest(SHUTTERS.filter(value => value <= safeShutter), Math.min(target, safeShutter));
 
   // In bright daylight (EV 14.2) with F8.0, ISO 100 shutter is ~1/320s => ISO remains 100
   const brightIso = autoIso(8.0, 1 / 320, 14.2);
@@ -333,4 +541,10 @@ test("auto exposure dynamically opens aperture in low light and night scenes and
   // In night scene (EV 5.8) with F2.8 and safe shutter 1/125s => ISO must automatically scale up to ISO 1600
   const nightIso = autoIso(2.8, 1 / 125, 5.8);
   assert.equal(nightIso, 1600, "in night scene AUTO ISO must scale up to ISO 1600");
+
+  assert.equal(closestSafeShutter(1 / 15, 1 / 125), 1 / 125, "auto shutter must not slow below the configured safety shutter in low light");
+  assert.ok(closestSafeShutter(1 / 70, 1 / 70) <= 1 / 70, "a safety shutter between camera steps must round to the faster step");
+  assert.match(page, /closestSafeShutter\(shutterOptions, \(a \*\* 2\) \/ Math\.pow\(2, evIso100\), safeShutter\)/, "P mode with manual ISO still obeys the safety shutter");
+  assert.match(page, /closestSafeShutter\(shutterOptions, \(a \*\* 2\) \/ Math\.pow\(2, targetEv \+ Math\.log2\(i \/ 100\)\), safeShutter\)/, "A mode with manual ISO still obeys the safety shutter");
+  assert.doesNotMatch(page, /darkShutter/, "reaching the Auto ISO ceiling must not override the safety shutter");
 });
