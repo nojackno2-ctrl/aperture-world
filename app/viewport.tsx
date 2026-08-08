@@ -1,31 +1,36 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import type { DirectionalLight, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, WebGLRenderer } from "three";
+import type { DirectionalLight, Material, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from "three";
 import { exposureSamples, subjectPath } from "./motion.mjs";
 import { verticalFieldOfView } from "./optics.mjs";
 import { cappedPixelRatio, nextPixelRatio, refreshTargetFps } from "./performance.mjs";
 import { buildScene } from "./scene3d.mjs";
+import { disposeObjectTree } from "./three-lifecycle";
 import { LAYER, WORLD, depthBlurPlan, viewMeterAdjustment } from "./world.mjs";
 
-type SceneKey = "landscape" | "bird" | "sports" | "portrait" | "group" | "street" | "night";
-type Billboard = Mesh & { material: MeshBasicMaterial };
-type BuiltWorld = { key: SceneKey; scene: Scene; subjects: Billboard[]; shadows: Billboard[]; sun: DirectionalLight; updaters: ((elapsed: number) => void)[]; world: { cameraHeight: number; pitch: number } };
+type SceneKey = keyof typeof WORLD;
+type ThreeRuntime = typeof import("./three-runtime");
+type ShadowMesh = Mesh & { material: MeshBasicMaterial };
+type BuiltWorld = { key: SceneKey; scene: Scene; subjects: Object3D[]; shadows: ShadowMesh[]; sun: DirectionalLight; updaters: ((elapsed: number) => void)[]; world: { cameraHeight: number; pitch: number } };
 /** What the AF frame is sitting on, and how far the subject itself now stands. */
 export type FocusReading = { focusM: number; subjectM: number };
 export type LightReading = { ev: number };
 type Engine = {
-  THREE: typeof import("three"); renderer: WebGLRenderer; camera: PerspectiveCamera; built: BuiltWorld | null; sceneKey: SceneKey | null; elapsed: number; epoch: number; focus: FocusReading; probedAt: number;
+  THREE: ThreeRuntime; renderer: WebGLRenderer; camera: PerspectiveCamera; built: BuiltWorld | null; sceneKey: SceneKey | null; elapsed: number; epoch: number; focus: FocusReading; probedAt: number;
   pixelRatio: number; maximumPixelRatio: number; projectionKey: string;
-  aimCamera: (focalOverride?: number) => void; poseSubjects: (seconds: number) => void; probeFocus: () => FocusReading; probeLight: () => LightReading; mount: (key: SceneKey) => void; teardown: () => void;
+  aimCamera: (focalOverride?: number) => void; poseSubjects: (seconds: number) => void; probeFocus: () => FocusReading; probeLight: () => LightReading; mount: (key: SceneKey) => void; wake: () => void; teardown: () => void;
 };
-export type CaptureRequest = { focalMm: number; fNumber: number; shutterSeconds: number; brightness: number; noise: number; shakePx: number };
-export type CaptureResult = FocusReading & { image: string };
+export type CaptureRequest = { focalMm: number; fNumber: number; shutterSeconds: number; brightness: number; noise: number; shakePx: number; lookTrajectory?: { yaw: number; pitch: number }[] };
+// Full-size pixels are handed back as a promise for the raw Blob (encoded off
+// the main thread by toBlob) so a 2000-shot library never holds 2000 base64
+// strings on the JS heap. The caller owns the Blob and mints object URLs from
+// it only when actually displaying a photo, so nothing here ties a URL's
+// lifetime to this component. The thumbnail is small enough to stay a plain string.
+export type CaptureResult = FocusReading & { thumb: string; image: Promise<Blob | null> };
 export type ViewportHandle = { capture: (request: CaptureRequest) => CaptureResult | null };
 type Props = { scene: SceneKey; focal: number; yaw: number; pitch: number; aimX: number; aimY: number; frozen?: boolean; onFocus?: (reading: FocusReading) => void; onLight?: (reading: LightReading) => void; onReady?: () => void };
 
-/** Longest slice of a long exposure that still reads as a streak instead of ghosts. */
-const MAX_EXPOSURE_SPAN_SECONDS = 2;
 const MAX_CAPTURE_WIDTH = 1600;
 const BUCKETS = [LAYER.far, LAYER.subject, LAYER.near] as const;
 /** Nothing solid under the AF frame: the lens racks past the sky dome, to infinity. */
@@ -55,14 +60,15 @@ function noisePattern(context: CanvasRenderingContext2D, seed: number) {
   return context.createPattern(tile.canvas, "repeat");
 }
 
+function firstMaterial(material: Material | Material[] | undefined) {
+  return Array.isArray(material) ? material[0] : material;
+}
+
 const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene, focal, yaw, pitch, aimX, aimY, frozen = false, onFocus, onLight, onReady }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const viewRef = useRef({ focal, yaw, pitch, scene, frozen, aimX, aimY });
   viewRef.current = { focal, yaw, pitch, scene, frozen, aimX, aimY };
-  if (engineRef.current) {
-    engineRef.current.aimCamera();
-  }
   const focusRef = useRef(onFocus);
   focusRef.current = onFocus;
   const lightRef = useRef(onLight);
@@ -74,16 +80,18 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
     if (!canvas) return;
 
     void (async () => {
-      const [THREE, geometryUtils] = await Promise.all([import("three"), import("three/addons/utils/BufferGeometryUtils.js")]);
+      const [THREE, geometryUtils] = await Promise.all([import("./three-runtime"), import("three/addons/utils/BufferGeometryUtils.js")]);
       if (disposed) return;
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: "high-performance" });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.08;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFShadowMap;
       const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 3000);
       camera.rotation.order = "YXZ";
       const noop = () => {};
-      const engine: Engine = { THREE, renderer, camera, built: null, sceneKey: null, elapsed: 0, epoch: performance.now(), focus: { focusM: 0, subjectM: 0 }, probedAt: 0, pixelRatio: 1, maximumPixelRatio: 1, projectionKey: "", aimCamera: noop, poseSubjects: noop, probeFocus: () => ({ focusM: INFINITY_FOCUS_M, subjectM: 0 }), probeLight: () => ({ ev: 0 }), mount: noop, teardown: noop };
+      const engine: Engine = { THREE, renderer, camera, built: null, sceneKey: null, elapsed: 0, epoch: performance.now(), focus: { focusM: 0, subjectM: 0 }, probedAt: 0, pixelRatio: 1, maximumPixelRatio: 1, projectionKey: "", aimCamera: noop, poseSubjects: noop, probeFocus: () => ({ focusM: INFINITY_FOCUS_M, subjectM: 0 }), probeLight: () => ({ ev: 0 }), mount: noop, wake: noop, teardown: noop };
       engineRef.current = engine;
 
       const graphics = renderer.getContext();
@@ -100,6 +108,12 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       raycaster.params.Line.threshold = 0;
       raycaster.params.Points.threshold = 0;
       const afPoint = new THREE.Vector2();
+      const meterPoint = new THREE.Vector2();
+      const forward = new THREE.Vector3();
+      const emitterPosition = new THREE.Vector3();
+      const toEmitter = new THREE.Vector3();
+      const surfaceNormal = new THREE.Vector3();
+      let subjectRoots = new Set<Object3D>();
 
       const resize = () => {
         const width = Math.max(1, canvas.clientWidth), height = Math.max(1, canvas.clientHeight);
@@ -110,14 +124,18 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         camera.aspect = width / height;
         engine.projectionKey = "";
         engine.aimCamera();
+        engine.wake();
       };
       const observer = new ResizeObserver(resize);
       observer.observe(canvas);
       resize();
 
       let lastFrameAt = 0, sampleStartedAt = 0, sampledFrames = 0, fastestFrameMs = Number.POSITIVE_INFINITY, stableWindows = 0, lastLightAt = 0, lastLightEv = Number.NaN;
+      const scheduleFrame = () => {
+        if (!disposed && !frame) frame = window.requestAnimationFrame(loop);
+      };
       const loop = (now: number) => {
-        frame = window.requestAnimationFrame(loop);
+        frame = 0;
         if (!engine.built) return;
         if (document.hidden) { lastFrameAt = now; sampleStartedAt = now; sampledFrames = 0; return; }
         if (lastFrameAt) {
@@ -146,7 +164,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           const light = engine.probeLight();
           if (!Number.isFinite(lastLightEv) || Math.abs(light.ev - lastLightEv) >= 0.025) {
             lastLightEv = light.ev;
-            lightRef.current?.({ ev: light.ev, level: light.level });
+            lightRef.current?.({ ev: light.ev });
           }
           lastLightAt = now;
         }
@@ -170,7 +188,12 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           sampleStartedAt = now;
           sampledFrames = 0;
         }
+        canvas.dataset.renderState = viewRef.current.frozen ? "paused" : "active";
+        if (!viewRef.current.frozen) scheduleFrame();
       };
+      engine.wake = scheduleFrame;
+      const onVisibilityChange = () => { if (!document.hidden) engine.wake(); };
+      document.addEventListener("visibilitychange", onVisibilityChange);
 
       // Point the tripod head. A capture calls this too, so a photo never
       // depends on an animation frame having landed first.
@@ -197,8 +220,11 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         built.subjects.forEach((mesh, index) => {
           const pose = subjectPath(built.key, seconds, built.key === "bird" ? index / built.subjects.length : 0, index);
           mesh.position.set(pose.x, pose.y, pose.z);
-          const yawRad = (mesh.type === "Group" || (mesh as Partial<Billboard>).isGroup) ? (pose.yaw * Math.PI) / 180 : Math.atan2(-pose.x, -pose.z);
-          mesh.rotation.set(0, yawRad, (pose.tilt * Math.PI) / 180);
+          const yawRad = mesh.type === "Group" ? (pose.yaw * Math.PI) / 180 : Math.atan2(-pose.x, -pose.z);
+          // Yaw-pitch-roll: the pitch axis has to be the model's own wing line,
+          // otherwise a jet lined up along X would roll instead of rotating.
+          mesh.rotation.order = "YXZ";
+          mesh.rotation.set(((pose.pitch ?? 0) * Math.PI) / 180, yawRad, (pose.tilt * Math.PI) / 180);
           const shadow = built.shadows[index];
           if (shadow) { shadow.position.set(pose.x, 0.02, pose.z); shadow.visible = mesh.visible; }
         });
@@ -215,10 +241,10 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         // do it itself or every object still measures as sitting on the tripod.
         built.scene.updateMatrixWorld();
 
-        const findSubjectForHit = (hitObject: THREE.Object3D) => {
-          let curr: THREE.Object3D | null = hitObject;
+        const findSubjectForHit = (hitObject: Object3D) => {
+          let curr: Object3D | null = hitObject;
           while (curr) {
-            if (built.subjects.includes(curr as any)) return curr;
+            if (subjectRoots.has(curr)) return curr;
             curr = curr.parent;
           }
           return null;
@@ -245,7 +271,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         const hits = raycaster.intersectObjects(built.scene.children, true);
         for (const hit of hits) {
           const obj = hit.object as Partial<Mesh>;
-          const mat = (Array.isArray(obj.material) ? obj.material[0] : obj.material) as MeshBasicMaterial | undefined;
+          const mat = firstMaterial(obj.material) as MeshBasicMaterial | undefined;
           // Skip line segments (e.g. rain) and depthWrite: false visual decals (shadows, puddle glow)
           if (obj.isMesh && hit.distance > 0.05 && mat?.depthWrite !== false) {
             const subjectHit = findSubjectForHit(hit.object);
@@ -260,50 +286,52 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         const built = engine.built;
         if (!built) return { ev: 0 };
         built.scene.updateMatrixWorld();
-        const forward = new THREE.Vector3();
         camera.getWorldDirection(forward);
         const emitter = built.scene.userData.meteringEmitter;
-        const emitterPosition = new THREE.Vector3();
         if (emitter?.getWorldPosition) emitter.getWorldPosition(emitterPosition);
         else emitterPosition.copy(built.sun.position);
-        const toEmitter = emitterPosition.sub(camera.position).normalize();
+        toEmitter.copy(emitterPosition).sub(camera.position).normalize();
         const sunAlignment = Math.max(0, forward.dot(toEmitter));
 
         // Reflected-light meters respond to what fills the frame. The centre ray
         // samples the aimed surface, including its colour, emissive glow and how
         // directly it faces the key light; sky falls back to the view direction.
-        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+        raycaster.setFromCamera(meterPoint, camera);
         const hit = raycaster.intersectObjects(built.scene.children, true).find(item => {
           const obj = item.object as Partial<Mesh>;
-          const mat = (Array.isArray(obj.material) ? obj.material[0] : obj.material) as MeshBasicMaterial | undefined;
+          const mat = firstMaterial(obj.material) as MeshBasicMaterial | undefined;
           return obj.isMesh && item.object !== emitter && mat?.depthWrite !== false;
         });
         let surfaceLuminance: number | null = null, emissiveLuminance = 0, incidence = 1;
         if (hit) {
-          const material = (Array.isArray((hit.object as Mesh).material) ? (hit.object as Mesh).material[0] : (hit.object as Mesh).material) as MeshBasicMaterial & { emissive?: { r: number; g: number; b: number }; emissiveIntensity?: number };
+          const material = firstMaterial((hit.object as Mesh).material) as MeshBasicMaterial & { emissive?: { r: number; g: number; b: number }; emissiveIntensity?: number };
           if (material?.color) surfaceLuminance = material.color.r * 0.2126 + material.color.g * 0.7152 + material.color.b * 0.0722;
           if (material?.emissive) emissiveLuminance = (material.emissive.r * 0.2126 + material.emissive.g * 0.7152 + material.emissive.b * 0.0722) * (material.emissiveIntensity ?? 1);
           if (hit.face) {
-            const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
-            incidence = Math.max(0, normal.dot(toEmitter));
+            surfaceNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+            incidence = Math.max(0, surfaceNormal.dot(toEmitter));
           }
         }
         const localEv = viewMeterAdjustment({ sunAlignment, surfaceLuminance, incidence, emissiveLuminance });
         return { ev: localEv };
       };
 
+      const disposeBuiltWorld = () => {
+        if (!engine.built) return;
+        disposeObjectTree(engine.built.scene, renderer);
+        engine.built = null;
+        subjectRoots.clear();
+      };
+
       engine.mount = (key: SceneKey) => {
-        if (engine.built) {
-          engine.built.scene.traverse(object => {
-            const mesh = object as Partial<Mesh>;
-            mesh.geometry?.dispose?.();
-            const material = mesh.material;
-            for (const item of Array.isArray(material) ? material : material ? [material] : []) { (item as MeshBasicMaterial).map?.dispose?.(); item.dispose?.(); }
-          });
-        }
-        const built = buildScene(THREE, key, geometryUtils.mergeGeometries) as unknown as BuiltWorld;
+        disposeBuiltWorld();
+        // scene3d.mjs is dependency-injected and only touches exports provided by
+        // three-runtime.ts. Its inferred JS signature widens that parameter to
+        // the complete Three namespace, so keep the narrowing at this boundary.
+        const built = buildScene(THREE as unknown as typeof import("three"), key, geometryUtils.mergeGeometries) as unknown as BuiltWorld;
         built.key = key;
         engine.built = built;
+        subjectRoots = new Set(built.subjects);
         engine.elapsed = 0;
         engine.epoch = performance.now();
         engine.focus = { focusM: 0, subjectM: 0 };
@@ -311,14 +339,21 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         engine.poseSubjects(0);
         renderer.setClearColor(0x000000, 0);
         resize();
+        engine.wake();
       };
 
       engine.mount(viewRef.current.scene);
       engine.sceneKey = viewRef.current.scene;
-      frame = window.requestAnimationFrame(loop);
+      engine.wake();
       onReady?.();
 
-      engine.teardown = () => { observer.disconnect(); renderer.dispose(); };
+      engine.teardown = () => {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+        observer.disconnect();
+        engine.mount = noop;
+        disposeBuiltWorld();
+        renderer.dispose();
+      };
     })();
 
     return () => {
@@ -328,6 +363,10 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       engineRef.current = null;
     };
   }, [onReady]);
+
+  useEffect(() => {
+    engineRef.current?.wake();
+  }, [focal, yaw, pitch, aimX, aimY, frozen]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -357,34 +396,54 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       const width = Math.min(MAX_CAPTURE_WIDTH, source.width) || 1;
       const height = Math.max(1, Math.round((source.height / source.width) * width));
 
-      const span = Math.min(request.shutterSeconds, MAX_EXPOSURE_SPAN_SECONDS);
+      const span = Math.min(request.shutterSeconds, 30);
+      const trajectory = request.lookTrajectory && request.lookTrajectory.length > 0
+        ? request.lookTrajectory
+        : [{ yaw: (camera.rotation.y * 180) / Math.PI, pitch: (camera.rotation.x * 180) / Math.PI - built.world.pitch }];
+      const hasMotion = trajectory.length > 1;
+      const cameraMotionAngle = hasMotion
+        ? Math.hypot(trajectory[trajectory.length - 1].yaw - trajectory[0].yaw, trajectory[trajectory.length - 1].pitch - trajectory[0].pitch)
+        : 0;
+      const cameraMotionPx = (cameraMotionAngle / Math.max(0.01, verticalFieldOfView(request.focalMm, camera.aspect))) * height;
+
       // Enough sub-frames that the smear stays continuous: one per few pixels the
-      // subject and the shake actually travel, rather than a fixed cadence.
+      // subject, the camera pan, and the shake actually travel, rather than a fixed cadence.
       const travel = [subjectPath(built.key, engine.elapsed), subjectPath(built.key, engine.elapsed + span)]
         .map(pose => new THREE.Vector3(pose.x, pose.y, pose.z).project(camera));
       const drift = Math.hypot(travel[1].x - travel[0].x, travel[1].y - travel[0].y) * 0.5 * width;
-      const samples = Math.max(8, Math.min(40, Math.ceil((drift + request.shakePx * 2) / 2.5)));
+      const samples = Math.max(8, Math.min(64, Math.ceil((drift + request.shakePx * 2 + cameraMotionPx * 0.75) / 2.5)));
       const poses = exposureSamples(built.key, engine.elapsed, span, samples);
       const blur = depthBlurPlan(built.key, { focalMm: request.focalMm, fNumber: request.fNumber, imageWidthPx: width, ...reading });
 
       const layers = BUCKETS.map(() => scratchCanvas(width, height));
       const shakeRadians = ((request.shakePx / width) * verticalFieldOfView(request.focalMm, camera.aspect) * camera.aspect * Math.PI) / 180;
       const shakeAngle = (engine.elapsed % 1) * Math.PI * 2;
-      const baseYaw = camera.rotation.y, basePitch = camera.rotation.x;
 
       // Additive accumulation averages the sub-frames exactly. Plain source-over
       // at alpha 1/N converges to 1-(1-1/N)^N of the true value, darkening every shot.
       for (const layer of layers) { layer.context.globalAlpha = 1 / samples; layer.context.globalCompositeOperation = "lighter"; }
-      for (const [step, pose] of poses.entries()) {
+      for (const [step] of poses.entries()) {
+        const fraction = step / Math.max(1, samples - 1);
+        const trajIndex = fraction * (trajectory.length - 1);
+        const idx0 = Math.floor(trajIndex);
+        const idx1 = Math.min(trajectory.length - 1, Math.ceil(trajIndex));
+        const tFrac = trajIndex - idx0;
+        const curYaw = trajectory[idx0].yaw + (trajectory[idx1].yaw - trajectory[idx0].yaw) * tFrac;
+        const curPitch = trajectory[idx0].pitch + (trajectory[idx1].pitch - trajectory[idx0].pitch) * tFrac;
+
         const drift = (step / Math.max(1, samples - 1) - 0.5) * shakeRadians;
-        camera.rotation.y = baseYaw + Math.cos(shakeAngle) * drift;
-        camera.rotation.x = basePitch + Math.sin(shakeAngle) * drift;
+        // The trajectory arrives in viewfinder degrees relative to the scene's base
+        // tilt, so it takes the same conversion aimCamera uses. Skip it and the shot
+        // is fired from a different direction than the one the user framed.
+        camera.rotation.y = (curYaw * Math.PI) / 180 + Math.cos(shakeAngle) * drift;
+        camera.rotation.x = ((curPitch + built.world.pitch) * Math.PI) / 180 + Math.sin(shakeAngle) * drift;
         camera.updateProjectionMatrix();
         built.subjects.forEach((mesh, index) => {
           const subjectPose = subjectPath(built.key, engine.elapsed + (span * step) / Math.max(1, samples), built.key === "bird" ? index / built.subjects.length : 0, index);
           mesh.position.set(subjectPose.x, subjectPose.y, subjectPose.z);
-          const yawRad = (mesh.type === "Group" || (mesh as Partial<Billboard>).isGroup) ? (subjectPose.yaw * Math.PI) / 180 : Math.atan2(-subjectPose.x, -subjectPose.z);
-          mesh.rotation.set(0, yawRad, (subjectPose.tilt * Math.PI) / 180);
+          const yawRad = mesh.type === "Group" ? (subjectPose.yaw * Math.PI) / 180 : Math.atan2(-subjectPose.x, -subjectPose.z);
+          mesh.rotation.order = "YXZ";
+          mesh.rotation.set(((subjectPose.pitch ?? 0) * Math.PI) / 180, yawRad, (subjectPose.tilt * Math.PI) / 180);
           const shadow = built.shadows[index];
           if (shadow) shadow.position.set(subjectPose.x, 0.02, subjectPose.z);
         });
@@ -411,7 +470,10 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       });
       composite.context.filter = "none";
 
-      const output = scratchCanvas(width, height);
+      // The far-layer surface is no longer needed after compositing, so reuse it
+      // for output instead of allocating a fifth full-resolution canvas.
+      const output = layers[0];
+      output.context.clearRect(0, 0, width, height);
       output.context.filter = `brightness(${request.brightness.toFixed(3)}) saturate(${(1 - Math.min(0.4, request.noise)).toFixed(3)})`;
       output.context.drawImage(composite.canvas, 0, 0);
       output.context.filter = "none";
@@ -426,7 +488,17 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           output.context.globalCompositeOperation = "source-over";
         }
       }
-      return { image: output.canvas.toDataURL("image/jpeg", 0.86), ...reading };
+      const thumbWidth = Math.min(320, width);
+      const thumbHeight = Math.max(1, Math.round((height / width) * thumbWidth));
+      const thumbCanvas = scratchCanvas(thumbWidth, thumbHeight);
+      thumbCanvas.context.drawImage(output.canvas, 0, 0, width, height, 0, 0, thumbWidth, thumbHeight);
+      const thumb = thumbCanvas.canvas.toDataURL("image/jpeg", 0.7);
+      // toBlob encodes async and off the JS-string heap; the caller decides when
+      // (and whether) to mint an object URL from the bytes it hands back.
+      const image = new Promise<Blob | null>(resolve => {
+        output.canvas.toBlob(resolve, "image/jpeg", 0.86);
+      });
+      return { thumb, image, ...reading };
     },
   }), []);
 
