@@ -210,6 +210,13 @@ Build a browser-based photography practice game for beginners that teaches the e
     - Aligned 3D animal and vehicle models in `app/viewport.tsx` to rotate along their travel heading (`pose.yaw`), and updated `app/motion.mjs` with linear route support (`type: "line"`). Vehicles (cars, taxis, scooters) drive strictly on the asphalt road lanes (`X = +2.6` right lane, `X = -2.6` left lane), while animals and birds fly/walk along natural linear paths entering and exiting beyond camera framing boundaries (`X = ±45` to `±60`).
     - Validation: `cmd /c npm test` passed all 12/12 unit and product tests, production build succeeded, and `git diff --check` passed cleanly without whitespace issues.
 
+- Source control publication on 2026-08-08. The user explicitly authorized integrating all branches and uploading to GitHub, satisfying the `AGENTS.md` commit/push rule.
+  - Pre-push validation: `npm test` passed 13/13 product tests, the production build succeeded, and `git diff --check` passed.
+  - The outstanding 3D-engine work (8 modified files, 6 new modules) was committed to `fullscreen-camera-hud` as `b697c80` "Render the camera through a real 3D engine".
+  - `main` was fast-forwarded to `b697c80`. The two branches had never diverged, so integration required no merge commit and history stayed linear; `git diff main fullscreen-camera-hud` is empty.
+  - Created the **private** repository `nojackno2-ctrl/aperture-world` (https://github.com/nojackno2-ctrl/aperture-world) and pushed both `main` (default) and `fullscreen-camera-hud`, each at `b697c80`. Private was chosen deliberately because this handoff records the private deployment URL.
+  - `.gitignore` gained `.preview.*.log` so dev-server logs stay untracked. 58 files are tracked; no build artifacts (`dist/`, `.wrangler/`), dependencies, or logs were published. A secret scan over tracked sources found nothing; the only `prerenderSecret` hits live in the ignored `dist/` tree.
+  - This is a source-control publication only. No Sites version was saved and no production deployment was performed in this pass.
 
 ## Product Scope
 
@@ -226,6 +233,6 @@ Build a browser-based photography practice game for beginners that teaches the e
 ## Next Steps
 
 1. Verify pointer-lock aiming in a visible browser window (the automation pane cannot, see above): click the live view, confirm the mouse turns the head, that Escape releases it, and that the live-view AF readout tracks the crosshair while the world animates.
-2. Obtain explicit user authorization to commit/push the validated 3D world, fullscreen, motion, focal-length/FOV, and AF-aiming changes, as required by `AGENTS.md`, then publish through Sites. Note the release now ships `three` in the client bundle, which pushed a chunk past Vite's 500 kB warning threshold.
+2. The 3D world, fullscreen, motion, focal-length/FOV, and AF-aiming changes are now committed and pushed to GitHub as `b697c80`. Publishing through Sites still needs separate explicit authorization. Note the release now ships `three` in the client bundle, which pushed a chunk past Vite's 500 kB warning threshold.
 3. If the user requests browser testing, verify mobile-width quick controls, shutter, fullscreen entry/exit, path geometry, and captured-pose freeze before or after publication.
-4. Record the exact commit and deployment evidence after publication.
+4. Commit evidence for the GitHub publication is recorded above. Record Sites version and deployment evidence if and when a production deploy is authorized.
