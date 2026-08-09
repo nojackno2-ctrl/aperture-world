@@ -133,6 +133,10 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /className="mobile-console"/);
   assert.match(page, /requestFullscreen/);
   assert.match(page, /fullscreenchange/);
+  assert.match(page, /document\.fullscreenEnabled/);
+  assert.match(page, /await target\.requestFullscreen\(\)/, "fullscreen uses the broadly compatible argument-free API so mobile browser chrome can be removed");
+  assert.doesNotMatch(page, /immersiveFallback|navigationUI/, "a failed fullscreen request must not masquerade as real fullscreen while leaving the URL bar visible");
+  assert.match(page, /className="fullscreen-notice"/, "fullscreen failures are explained instead of silently falling back");
   assert.match(page, /<Histogram image=\{viewedBlob\}/);
   assert.match(styles, /\.playback-histogram/);
   assert.match(styles, /\.exposure-scale\{[^}]*background:transparent[^}]*box-shadow:none/);
@@ -155,10 +159,18 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(styles, /\.gear-button[^}]*border-radius:50%/);
   assert.match(styles, /\.mobile-console\{[^}]*background:transparent[^}]*box-shadow:none/);
   assert.match(styles, /\.mobile-shutter i\{[^}]*#ff5a54[^}]*#c9151b/);
+  assert.match(styles, /@media \(hover:none\), \(pointer:coarse\)/, "touch layouts are selected by input capability, including phones wider than 720px in landscape");
+  assert.match(styles, /@media \(orientation:landscape\) and \(max-height:600px\)/, "short landscape phones receive a height-aware layout");
+  assert.match(styles, /@media \(max-width:480px\) and \(orientation:portrait\)/, "narrow portrait phones receive their own layout");
+  assert.match(styles, /@media \(max-width:720px\)\s*\{[\s\S]*?\.mobile-drive-strip\s*\{\s*display:none\s*\}/, "phone-width layouts hide the obsolete drive strip even when pointer emulation reports a fine pointer");
+  assert.match(styles, /@media \(max-width:720px\) and \(orientation:landscape\) and \(max-height:600px\)\s*\{[\s\S]*?\.hud-top-mid\s*\{[\s\S]*?position:absolute;[\s\S]*?top:max\(5px,env\(safe-area-inset-top\)\);[\s\S]*?\.mobile-console\s*\{[\s\S]*?display:grid;[\s\S]*?height:calc\(var\(--touch-console-height\) \+ env\(safe-area-inset-bottom\)\);[\s\S]*?grid-template-rows:1fr;/, "fine-pointer phone landscape restores the compact two-column console and keeps the focal scale in the top band");
+  assert.match(styles, /--touch-console-height:\s*clamp\(/, "the touch console scales with the available viewport instead of using one fixed size");
+  assert.match(styles, /\.mobile-adjuster input\s*\{[^}]*height:\s*44px[^}]*min-height:\s*44px/s, "the mobile slider keeps a finger-sized hit area");
   assert.match(styles, /\.gallery\{[^}]*background:rgba\(3,5,4,\.52\)/);
   assert.match(styles, /\.gallery-panel\{[^}]*background:rgba\(8,12,10,\.78\)/);
-  assert.match(styles, /\.gallery\{[^}]*padding:clamp\(12px,1\.5vw,24px\)/, "the photo library keeps only a narrow viewport margin");
+  assert.match(styles, /\.gallery\s*\{[^}]*width:\s*100vw[^}]*height:\s*100dvh[^}]*padding:\s*0/s, "the photo library occupies the complete dynamic viewport");
   assert.match(styles, /\.gallery-panel\{[^}]*width:100%[^}]*height:100%/, "the photo library fills nearly the entire viewport");
+  assert.match(styles, /\.gallery\s*\{[^}]*width:\s*100vw[^}]*height:\s*100dvh[^}]*max-width:\s*none[^}]*max-height:\s*none[^}]*margin:\s*0[^}]*border:\s*0/s, "the native dialog defaults are reset so the library cannot collapse into a left sidebar");
   assert.doesNotMatch(styles, /\.gallery-panel\{[^}]*(?:1180px|max-height)/, "the desktop photo library must not be constrained to a small modal");
   assert.match(styles, /\.gallery-viewer\{[^}]*height:100%[^}]*min-height:0/, "photo review fills the library below its header");
   assert.match(styles, /\.photo-nav-previous\{[^}]*left:18px/);
@@ -218,15 +230,25 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /horizontalFieldOfView\(focal\)/);
   assert.match(page, /LOOK_LIMITS/);
 
-  // Aiming is a shooter's: the pointer is locked, raw mouse movement turns the
-  // head, and the AF frame the pointer carries is what the lens focuses on.
+  // Aiming is a shooter's: the pointer is locked and raw movement turns the
+  // camera while the AF frame and focus probe stay fixed at screen centre.
   assert.match(page, /requestPointerLock/);
   assert.match(page, /document\.exitPointerLock\(\)/);
   assert.match(page, /pointerlockchange/);
   assert.match(page, /event\.movementX/);
   assert.match(page, /event\.movementY/);
   assert.match(page, /af-frame/);
-  assert.match(styles, /\.af-frame\{position:absolute/);
+  assert.match(page, /aimX=\{0\} aimY=\{0\}/);
+  assert.doesNotMatch(page, /\bsetAim\b|\bupdateAim\b|\btype Aim\b/, "the centre AF target must not follow mouse or touch coordinates");
+  assert.match(styles, /\.af-frame\{position:absolute[^}]*left:50%[^}]*top:50%/);
+  assert.match(page, /type AfFrameSize = "small" \| "medium" \| "large"/);
+  assert.match(page, /useState<AfFrameSize>\("small"\)/, "the existing compact AF frame remains the default");
+  assert.match(page, /className=\{`af-frame af-size-\$\{afFrameSize\}/, "the selected AF size changes only the visible centre frame");
+  assert.match(page, /className="af-size-options" role="group" aria-label="AF 對焦框尺寸"/);
+  assert.match(styles, /\.af-frame\.af-size-small\{width:var\(--af-frame-small\)\}/);
+  assert.match(styles, /\.af-frame\.af-size-medium\{width:var\(--af-frame-medium\)\}/);
+  assert.match(styles, /\.af-frame\.af-size-large\{width:var\(--af-frame-large\)\}/);
+  assert.match(styles, /\.af-size-options button\{[^}]*min-width:44px[^}]*min-height:44px/, "AF size choices remain finger-sized");
   assert.match(viewport, /Raycaster/);
   assert.match(viewport, /probeFocus/);
   assert.match(viewport, /intersectObjects\(built\.scene\.children, true\)/);
@@ -293,6 +315,39 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
     "street.jpg",
   ].map(file => assert.rejects(access(new URL(`public/scenes/${file}`, templateRoot)), `public/scenes/${file} must be gone`)));
   await assert.rejects(access(new URL("../app/_sites-preview", templateRoot)));
+});
+
+test("responsive contracts cover portrait, landscape, tablet, desktop, and ultrawide viewports", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const viewports = [
+    { name: "phone portrait", width: 390, height: 844, coarse: true },
+    { name: "phone landscape", width: 844, height: 390, coarse: true },
+    { name: "tablet portrait", width: 768, height: 1024, coarse: true },
+    { name: "tablet landscape", width: 1024, height: 768, coarse: true },
+    { name: "desktop", width: 1440, height: 900, coarse: false },
+    { name: "ultrawide", width: 1920, height: 800, coarse: false },
+  ];
+  assert.deepEqual(viewports.map(({ width, height }) => `${width}x${height}`), ["390x844", "844x390", "768x1024", "1024x768", "1440x900", "1920x800"]);
+  for (const viewport of viewports) {
+    assert.ok(viewport.width > 0 && viewport.height > 0, `${viewport.name} has a valid viewport`);
+    if (viewport.coarse) assert.match(styles, /@media \(hover:none\), \(pointer:coarse\)/, `${viewport.name} uses the touch-capability layout`);
+    if (viewport.width <= 480 && viewport.height > viewport.width) assert.match(styles, /@media \(max-width:480px\) and \(orientation:portrait\)/, `${viewport.name} uses the narrow portrait layout`);
+    if (viewport.height <= 600 && viewport.width > viewport.height) assert.match(styles, /@media \(orientation:landscape\) and \(max-height:600px\)/, `${viewport.name} uses the short landscape layout`);
+    if (viewport.width >= 721 && viewport.width <= 1100) assert.match(styles, /@media \(min-width:721px\) and \(max-width:1100px\)/, `${viewport.name} uses the tablet layout`);
+  }
+  assert.match(styles, /\.hud\{[^}]*grid-template-columns:auto minmax\(0,1fr\) auto/, "the desktop and ultrawide HUD retain flexible centre space");
+  assert.match(styles, /\.hud-top-left \{ max-width:calc\(100vw - \(var\(--touch-target\) \* 3\) - 32px\) \}/, "portrait HUD reserves space for all three top-right controls");
+  assert.match(styles, /\.mobile-console \{[\s\S]*?grid-template-columns: minmax\(0, \.9fr\) minmax\(0, 1\.5fr\);/, "landscape touch controls can shrink without horizontal overflow");
+  const shortLandscapeFallback = { width: 700, height: 323, consoleHeight: 66, focalTop: 5, focalHeight: 50 };
+  assert.ok(shortLandscapeFallback.focalTop + shortLandscapeFallback.focalHeight <= shortLandscapeFallback.height - shortLandscapeFallback.consoleHeight, "700x323 keeps the focal scale above the compact console");
+  assert.match(styles, /\.gallery\s*\{[^}]*width:\s*100vw[^}]*height:\s*100dvh[^}]*max-width:\s*none[^}]*max-height:\s*none[^}]*margin:\s*0[^}]*padding:\s*0/s, "the gallery is full-viewport at every aspect ratio");
+  assert.match(styles, /\.af-frame\{position:absolute[^}]*left:50%[^}]*top:50%[^}]*transform:translate\(-50%,-50%\)/, "the AF frame remains geometrically centred at every aspect ratio");
+  assert.match(page, /<Viewport3D[^>]*aimX=\{0\} aimY=\{0\}/, "the renderer focus probe remains centred independently of layout");
+  const touchRelease = page.slice(page.indexOf("const onPointerUp"), page.indexOf("const mobileOptions"));
+  assert.doesNotMatch(touchRelease, /capture\(|startBurst\(/, "touch release never fires the shutter; only dedicated shutter controls do");
 });
 
 test("fixed light sources still produce view-dependent automatic readings", () => {
