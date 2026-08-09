@@ -17,6 +17,6 @@ export function horizontalFieldOfView(focalLengthMm, sensorWidthMm = FULL_FRAME_
  */
 export function verticalFieldOfView(focalLengthMm, aspect, sensorWidthMm = FULL_FRAME_SENSOR_WIDTH_MM) {
   if (!(aspect > 0)) throw new RangeError("Aspect ratio must be positive");
-  const halfHorizontal = horizontalFieldOfView(focalLengthMm, sensorWidthMm) * Math.PI / 360;
-  return 2 * Math.atan(Math.tan(halfHorizontal) / aspect) * 180 / Math.PI;
+  if (!(focalLengthMm > 0) || !(sensorWidthMm > 0)) throw new RangeError("Focal length and sensor width must be positive");
+  return 2 * Math.atan(sensorWidthMm / (2 * focalLengthMm * aspect)) * 180 / Math.PI;
 }
