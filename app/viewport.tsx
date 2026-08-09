@@ -1,15 +1,17 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import type { DirectionalLight, Material, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from "three";
+import type { DirectionalLight, Intersection, Material, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from "three";
 import { exposureSamples, subjectPath } from "./motion.mjs";
 import { verticalFieldOfView } from "./optics.mjs";
 import { cappedPixelRatio, nextPixelRatio, refreshTargetFps } from "./performance.mjs";
-import { buildScene } from "./scene3d.mjs";
+import { buildScene, loadSceneModule, prefetchOtherScenes } from "./scene3d.mjs";
 import { disposeObjectTree } from "./three-lifecycle";
 import { LAYER, WORLD, depthBlurPlan, viewMeterAdjustment } from "./world.mjs";
 
 type SceneKey = keyof typeof WORLD;
+/** Every scenario module exposes the same pair; the reference is type-only. */
+type SceneModule = typeof import("./scenes/landscape.mjs");
 type ThreeRuntime = typeof import("./three-runtime");
 type ShadowMesh = Mesh & { material: MeshBasicMaterial };
 type BuiltWorld = { key: SceneKey; scene: Scene; subjects: Object3D[]; shadows: ShadowMesh[]; sun: DirectionalLight; updaters: ((elapsed: number) => void)[]; world: { cameraHeight: number; pitch: number } };
@@ -18,8 +20,8 @@ export type FocusReading = { focusM: number; subjectM: number };
 export type LightReading = { ev: number };
 type Engine = {
   THREE: ThreeRuntime; renderer: WebGLRenderer; camera: PerspectiveCamera; built: BuiltWorld | null; sceneKey: SceneKey | null; elapsed: number; epoch: number; focus: FocusReading; probedAt: number;
-  pixelRatio: number; maximumPixelRatio: number; projectionKey: string;
-  aimCamera: (focalOverride?: number) => void; poseSubjects: (seconds: number) => void; probeFocus: () => FocusReading; probeLight: () => LightReading; mount: (key: SceneKey) => void; wake: () => void; teardown: () => void;
+  pixelRatio: number; maximumPixelRatio: number; projectionKey: string; scratch: ScratchPool;
+  aimCamera: (focalOverride?: number) => void; poseSubjects: (seconds: number) => void; castCenter: (x: number, y: number) => Intersection[]; probeFocus: (hits?: Intersection[]) => FocusReading; probeLight: (hits?: Intersection[]) => LightReading; mount: (key: SceneKey, sceneModule: SceneModule) => void; select: (key: SceneKey) => void; wake: () => void; teardown: () => void;
 };
 export type CaptureRequest = { focalMm: number; fNumber: number; shutterSeconds: number; brightness: number; noise: number; shakePx: number; lookTrajectory?: { yaw: number; pitch: number }[] };
 // Full-size pixels are handed back as a promise for the raw Blob (encoded off
@@ -39,16 +41,36 @@ const INFINITY_FOCUS_M = 4000;
 const FOCUS_PROBE_MS = 110;
 const PERFORMANCE_SAMPLE_MS = 1000;
 const LIGHT_METER_MS = 160;
+/** A reflected-light meter uses the same third-stop ladder as the camera controls; finer readings cannot change a setting. */
+const METER_STEP_EV = 1 / 3;
 
-function scratchCanvas(width: number, height: number) {
+type Scratch = { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D };
+/** Surfaces a capture rewrites from scratch every time, so they can outlive one shot. */
+type ScratchPool = { layers: (Scratch | null)[]; composite: Scratch | null; thumb: Scratch | null; noise: { tile: Scratch; image: ImageData } | null };
+
+function scratchCanvas(width: number, height: number): Scratch {
   const canvas = document.createElement("canvas");
   canvas.width = width; canvas.height = height;
   return { canvas, context: canvas.getContext("2d") as CanvasRenderingContext2D };
 }
 
-function noisePattern(context: CanvasRenderingContext2D, seed: number) {
-  const tile = scratchCanvas(96, 96);
-  const image = tile.context.createImageData(96, 96);
+/**
+ * A Hi+ burst fires thirty captures a second, and each one used to allocate five
+ * full-resolution canvases. The intermediate surfaces are fully overwritten by
+ * the next shot anyway, so they are kept and cleared instead of reallocated.
+ * Only the canvas handed to `toBlob` is still allocated per capture, so an
+ * in-flight encode can never be looking at a surface the next shot is painting.
+ */
+function reuseScratch(slot: Scratch | null, width: number, height: number): Scratch {
+  if (!slot || slot.canvas.width !== width || slot.canvas.height !== height) return scratchCanvas(width, height);
+  slot.context.clearRect(0, 0, width, height);
+  return slot;
+}
+
+function noisePattern(pool: ScratchPool, context: CanvasRenderingContext2D, seed: number) {
+  const tile = pool.noise?.tile ?? scratchCanvas(96, 96);
+  const image = pool.noise?.image ?? tile.context.createImageData(96, 96);
+  pool.noise = { tile, image };
   let value = seed;
   for (let index = 0; index < image.data.length; index += 4) {
     value = (value * 1103515245 + 12345) % 2147483648;
@@ -91,7 +113,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 3000);
       camera.rotation.order = "YXZ";
       const noop = () => {};
-      const engine: Engine = { THREE, renderer, camera, built: null, sceneKey: null, elapsed: 0, epoch: performance.now(), focus: { focusM: 0, subjectM: 0 }, probedAt: 0, pixelRatio: 1, maximumPixelRatio: 1, projectionKey: "", aimCamera: noop, poseSubjects: noop, probeFocus: () => ({ focusM: INFINITY_FOCUS_M, subjectM: 0 }), probeLight: () => ({ ev: 0 }), mount: noop, wake: noop, teardown: noop };
+      const engine: Engine = { THREE, renderer, camera, built: null, sceneKey: null, elapsed: 0, epoch: performance.now(), focus: { focusM: 0, subjectM: 0 }, probedAt: 0, pixelRatio: 1, maximumPixelRatio: 1, projectionKey: "", scratch: { layers: [], composite: null, thumb: null, noise: null }, aimCamera: noop, poseSubjects: noop, castCenter: () => [], probeFocus: () => ({ focusM: INFINITY_FOCUS_M, subjectM: 0 }), probeLight: () => ({ ev: 0 }), mount: noop, select: noop, wake: noop, teardown: noop };
       engineRef.current = engine;
 
       const graphics = renderer.getContext();
@@ -149,24 +171,33 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         // not leave the subject behind where the exposure timing expects it.
         if (viewRef.current.frozen) engine.epoch = now - engine.elapsed * 1000;
         else engine.elapsed = (now - engine.epoch) / 1000;
+        const view = viewRef.current;
         engine.aimCamera();
         engine.poseSubjects(engine.elapsed);
-        if (!viewRef.current.frozen && now - engine.probedAt > FOCUS_PROBE_MS) {
-          engine.probedAt = now;
-          const reading = engine.probeFocus();
-          // Report only real movement: a metre of jitter at 90 m changes nothing,
-          // half a metre at 4 m changes the whole photo.
-          const moved = Math.abs(reading.focusM - engine.focus.focusM) > engine.focus.focusM * 0.01 || Math.abs(reading.subjectM - engine.focus.subjectM) > engine.focus.subjectM * 0.01;
-          if (moved) { engine.focus = reading; focusRef.current?.(reading); }
-        }
         for (const update of engine.built.updaters) update(engine.elapsed);
-        if (now - lastLightAt >= LIGHT_METER_MS) {
-          const light = engine.probeLight();
-          if (!Number.isFinite(lastLightEv) || Math.abs(light.ev - lastLightEv) >= 0.025) {
-            lastLightEv = light.ev;
-            lightRef.current?.({ ev: light.ev });
+        const focusDue = !view.frozen && now - engine.probedAt > FOCUS_PROBE_MS;
+        const lightDue = now - lastLightAt >= LIGHT_METER_MS;
+        if (focusDue || lightDue) {
+          // The AF frame and the metering spot are the same point on the sensor,
+          // so one ray answers both. Two casts walked the same scene graph twice.
+          const shared = view.aimX === 0 && view.aimY === 0 ? engine.castCenter(0, 0) : undefined;
+          if (focusDue) {
+            engine.probedAt = now;
+            const reading = engine.probeFocus(shared);
+            // Report only real movement: a metre of jitter at 90 m changes nothing,
+            // half a metre at 4 m changes the whole photo.
+            const moved = Math.abs(reading.focusM - engine.focus.focusM) > engine.focus.focusM * 0.01 || Math.abs(reading.subjectM - engine.focus.subjectM) > engine.focus.subjectM * 0.01;
+            if (moved) { engine.focus = reading; focusRef.current?.(reading); }
           }
-          lastLightAt = now;
+          if (lightDue) {
+            const light = engine.probeLight(shared);
+            const meteredEv = Math.round(light.ev / METER_STEP_EV) * METER_STEP_EV;
+            if (!Number.isFinite(lastLightEv) || meteredEv !== lastLightEv) {
+              lastLightEv = meteredEv;
+              lightRef.current?.({ ev: meteredEv });
+            }
+            lastLightAt = now;
+          }
         }
         camera.layers.enableAll();
         renderer.render(engine.built.scene, camera);
@@ -188,7 +219,9 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           sampleStartedAt = now;
           sampledFrames = 0;
         }
-        canvas.dataset.renderState = viewRef.current.frozen ? "paused" : "active";
+        // Writing the same attribute value every frame still costs a DOM mutation.
+        const renderState = view.frozen ? "paused" : "active";
+        if (canvas.dataset.renderState !== renderState) canvas.dataset.renderState = renderState;
         if (!viewRef.current.frozen) scheduleFrame();
       };
       engine.wake = scheduleFrame;
@@ -231,15 +264,26 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         if (built.shadows[0]) built.shadows[0].material.opacity = 0.24;
       };
 
-      // Whatever sits under the AF frame is the plane the lens focuses on, exactly
-      // like dropping the box onto a face instead of the wall behind it.
-      engine.probeFocus = () => {
+      // One ray through a point on the sensor, sorted near to far. Autofocus and
+      // the light meter both read the middle of the frame, so they share this
+      // list instead of walking the whole scene graph twice.
+      engine.castCenter = (x: number, y: number) => {
         const built = engine.built;
-        if (!built) return { focusM: INFINITY_FOCUS_M, subjectM: 0 };
+        if (!built) return [];
         // Raycasting reads world matrices, and only a render refreshes them. A probe
         // before this scene's first frame, or right after re-posing a subject, has to
         // do it itself or every object still measures as sitting on the tripod.
         built.scene.updateMatrixWorld();
+        afPoint.set(x, y);
+        raycaster.setFromCamera(afPoint, camera);
+        return raycaster.intersectObjects(built.scene.children, true);
+      };
+
+      // Whatever sits under the AF frame is the plane the lens focuses on, exactly
+      // like dropping the box onto a face instead of the wall behind it.
+      engine.probeFocus = (sharedHits?: Intersection[]) => {
+        const built = engine.built;
+        if (!built) return { focusM: INFINITY_FOCUS_M, subjectM: 0 };
 
         const findSubjectForHit = (hitObject: Object3D) => {
           let curr: Object3D | null = hitObject;
@@ -265,10 +309,8 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           return closestSubjectM;
         };
 
-        afPoint.set(viewRef.current.aimX, viewRef.current.aimY);
-        raycaster.setFromCamera(afPoint, camera);
         // Recursive raycasting is required to penetrate 3D vehicle, animal & character groups
-        const hits = raycaster.intersectObjects(built.scene.children, true);
+        const hits = sharedHits ?? engine.castCenter(viewRef.current.aimX, viewRef.current.aimY);
         for (const hit of hits) {
           const obj = hit.object as Partial<Mesh>;
           const mat = firstMaterial(obj.material) as MeshBasicMaterial | undefined;
@@ -282,10 +324,10 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         return { focusM: INFINITY_FOCUS_M, subjectM: getFallbackSubjectM() };
       };
 
-      engine.probeLight = () => {
+      engine.probeLight = (sharedHits?: Intersection[]) => {
         const built = engine.built;
         if (!built) return { ev: 0 };
-        built.scene.updateMatrixWorld();
+        if (!sharedHits) built.scene.updateMatrixWorld();
         camera.getWorldDirection(forward);
         const emitter = built.scene.userData.meteringEmitter;
         if (emitter?.getWorldPosition) emitter.getWorldPosition(emitterPosition);
@@ -296,8 +338,12 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         // Reflected-light meters respond to what fills the frame. The centre ray
         // samples the aimed surface, including its colour, emissive glow and how
         // directly it faces the key light; sky falls back to the view direction.
-        raycaster.setFromCamera(meterPoint, camera);
-        const hit = raycaster.intersectObjects(built.scene.children, true).find(item => {
+        let meterHits = sharedHits;
+        if (!meterHits) {
+          raycaster.setFromCamera(meterPoint, camera);
+          meterHits = raycaster.intersectObjects(built.scene.children, true);
+        }
+        const hit = meterHits.find(item => {
           const obj = item.object as Partial<Mesh>;
           const mat = firstMaterial(obj.material) as MeshBasicMaterial | undefined;
           return obj.isMesh && item.object !== emitter && mat?.depthWrite !== false;
@@ -323,12 +369,12 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         subjectRoots.clear();
       };
 
-      engine.mount = (key: SceneKey) => {
+      engine.mount = (key: SceneKey, sceneModule: SceneModule) => {
         disposeBuiltWorld();
         // scene3d.mjs is dependency-injected and only touches exports provided by
         // three-runtime.ts. Its inferred JS signature widens that parameter to
         // the complete Three namespace, so keep the narrowing at this boundary.
-        const built = buildScene(THREE as unknown as typeof import("three"), key, geometryUtils.mergeGeometries) as unknown as BuiltWorld;
+        const built = buildScene(THREE as unknown as typeof import("three"), key, geometryUtils.mergeGeometries, sceneModule) as unknown as BuiltWorld;
         built.key = key;
         engine.built = built;
         subjectRoots = new Set(built.subjects);
@@ -342,16 +388,38 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         engine.wake();
       };
 
-      engine.mount(viewRef.current.scene);
-      engine.sceneKey = viewRef.current.scene;
+      // Each scenario's geometry is its own chunk. The requested world is claimed
+      // before the await so a fast switch supersedes an older resolution, and the
+      // previous world keeps rendering until the replacement is actually in hand.
+      engine.select = (key: SceneKey) => {
+        engine.sceneKey = key;
+        void loadSceneModule(key).then((sceneModule: SceneModule) => {
+          if (disposed || engine.sceneKey !== key) return;
+          engine.mount(key, sceneModule);
+        });
+      };
+
+      const firstKey = viewRef.current.scene;
+      const firstModule = await loadSceneModule(firstKey);
+      if (disposed) return;
+      engine.sceneKey = firstKey;
+      engine.mount(firstKey, firstModule);
       engine.wake();
       onReady?.();
+      // With the played world running, pull the other ten in the background so
+      // changing scene stays as immediate as when all eleven shipped together.
+      const warmTimer = window.setTimeout(() => prefetchOtherScenes(firstKey), 1200);
 
       engine.teardown = () => {
+        window.clearTimeout(warmTimer);
         document.removeEventListener("visibilitychange", onVisibilityChange);
         observer.disconnect();
         engine.mount = noop;
+        engine.select = noop;
         disposeBuiltWorld();
+        // Release the capture surfaces: five full-resolution canvases can be tens
+        // of megabytes of backing store the page no longer has any use for.
+        engine.scratch = { layers: [], composite: null, thumb: null, noise: null };
         renderer.dispose();
       };
     })();
@@ -371,8 +439,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine?.built || engine.sceneKey === scene) return;
-    engine.mount(scene);
-    engine.sceneKey = scene;
+    engine.select(scene);
   }, [scene]);
 
   useImperativeHandle(ref, () => ({
@@ -415,7 +482,8 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       const poses = exposureSamples(built.key, engine.elapsed, span, samples);
       const blur = depthBlurPlan(built.key, { focalMm: request.focalMm, fNumber: request.fNumber, imageWidthPx: width, ...reading });
 
-      const layers = BUCKETS.map(() => scratchCanvas(width, height));
+      const pool = engine.scratch;
+      const layers = BUCKETS.map((_, index) => (pool.layers[index] = reuseScratch(pool.layers[index] ?? null, width, height)));
       const shakeRadians = ((request.shakePx / width) * verticalFieldOfView(request.focalMm, camera.aspect) * camera.aspect * Math.PI) / 180;
       const shakeAngle = (engine.elapsed % 1) * Math.PI * 2;
 
@@ -460,7 +528,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       engine.aimCamera();
       engine.poseSubjects(engine.elapsed);
 
-      const composite = scratchCanvas(width, height);
+      const composite = (pool.composite = reuseScratch(pool.composite, width, height));
       const radii = [blur.far, blur.subject, blur.near];
       layers.forEach((layer, index) => {
         const radius = radii[index];
@@ -470,15 +538,14 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       });
       composite.context.filter = "none";
 
-      // The far-layer surface is no longer needed after compositing, so reuse it
-      // for output instead of allocating a fifth full-resolution canvas.
-      const output = layers[0];
-      output.context.clearRect(0, 0, width, height);
+      // The only surface allocated per shot: `toBlob` encodes it asynchronously, so
+      // it must not be the canvas the next frame of a burst starts painting over.
+      const output = scratchCanvas(width, height);
       output.context.filter = `brightness(${request.brightness.toFixed(3)}) saturate(${(1 - Math.min(0.4, request.noise)).toFixed(3)})`;
       output.context.drawImage(composite.canvas, 0, 0);
       output.context.filter = "none";
       if (request.noise > 0.01) {
-        const pattern = noisePattern(output.context, Math.floor(engine.elapsed * 1000) + 7);
+        const pattern = noisePattern(pool, output.context, Math.floor(engine.elapsed * 1000) + 7);
         if (pattern) {
           output.context.globalAlpha = Math.min(0.55, request.noise);
           output.context.globalCompositeOperation = "soft-light";
@@ -490,7 +557,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       }
       const thumbWidth = Math.min(320, width);
       const thumbHeight = Math.max(1, Math.round((height / width) * thumbWidth));
-      const thumbCanvas = scratchCanvas(thumbWidth, thumbHeight);
+      const thumbCanvas = (pool.thumb = reuseScratch(pool.thumb, thumbWidth, thumbHeight));
       thumbCanvas.context.drawImage(output.canvas, 0, 0, width, height, 0, 0, thumbWidth, thumbHeight);
       const thumb = thumbCanvas.canvas.toDataURL("image/jpeg", 0.7);
       // toBlob encodes async and off the JS-string heap; the caller decides when

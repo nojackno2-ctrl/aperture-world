@@ -415,7 +415,7 @@
   border-color: transparent;
   color: var(--accent);
   box-shadow: none;
-  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 70%, transparent));
+  filter: none;
 }
 
 .hud-quick-modes .mode-glyph {
@@ -426,7 +426,7 @@
   line-height: 0.95;
   letter-spacing: -0.055em;
   color: currentColor;
-  text-shadow: 0 2px 8px #000, 0 0 20px #000;
+  text-shadow: none;
   transition: all 0.18s ease;
 }
 
@@ -447,7 +447,7 @@
   width: calc(var(--quick-mode-size) * 0.92);
   height: calc(var(--quick-mode-size) * 0.92);
   stroke-width: 2.2;
-  filter: drop-shadow(0 2px 8px #000) drop-shadow(0 0 20px #000);
+  filter: none;
 }
 
 .mode-popover,
