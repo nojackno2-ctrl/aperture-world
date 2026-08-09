@@ -298,6 +298,13 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(viewport, /exposureSamples\(/);
   assert.match(viewport, /toDataURL/);
   assert.match(viewport, /camera\.layers\.set\(bucket\)/);
+  assert.match(viewport, /engine\.captureMaterials = collectMaterials\(built\.scene\)/, "capture caches every scene material for the depth-only pass");
+  assert.match(viewport, /material\.colorWrite = false/, "the occlusion pass writes depth without painting color");
+  const depthPass = viewport.indexOf("engine.captureMaterials.forEach(material => { material.colorWrite = false; });");
+  const bucketPass = viewport.indexOf("BUCKETS.forEach((bucket, index) =>", depthPass);
+  assert.ok(depthPass >= 0 && bucketPass > depthPass, "the complete-scene depth pass runs before any isolated blur bucket");
+  assert.match(viewport, /renderer\.clear\(true, false, false\)/, "later buckets clear color while preserving complete-scene depth occlusion");
+  assert.match(viewport, /renderer\.autoClear = previousAutoClear/, "capture restores the live renderer's automatic clearing mode");
   // Every photographable subject is procedural 3D geometry: no flat cutouts,
   // no canvas-painted people, no bitmap subject art anywhere in the world.
   assert.doesNotMatch(world3d, /SUBJECT_ART|billboard\(|characterTexture|_subject\.png|_bg_clean\.png|TextureLoader/);

@@ -182,3 +182,36 @@ The fifth pass recorded that quantising the meter would be a product decision, n
 - The top-left `P` exposure-mode glyph and drive-mode SVG already had transparent button/container backgrounds, but their large black `text-shadow` / `drop-shadow` effects were clipped to the square control bounds and visually read as translucent background cards.
 - Removed those glyph/icon shadows and the active-trigger glow while preserving the white/accent colours, control dimensions, hover scale, popovers, and click behavior. Added source contracts that keep all three shadow paths disabled.
 - Verified in the local browser at 1280x720: both clipped dark rectangles are gone, the glyph/icon remain visible, and the mode popover still opens. `npm test` completed a clean Vinext production build and all 15/15 Node tests passed.
+
+## Sixth optimization pass (2026-08-09, uncommitted): CPU sub-frame math, typed-array grain, histogram decoupling, and optics simplification
+
+Scope: CPU per frame / sub-frame, canvas pixel processing throughput, histogram view switching, and React render allocations. Preserves all scene geometry, lighting, optical formulas, test contracts, and visual outputs.
+
+- **Capture sub-frame matrix calculation pruning (`app/viewport.tsx`)**:
+  - Removed redundant `camera.updateProjectionMatrix()` inside the `capture()` sub-frame loop (`for (const [step] of poses.entries())`). The projection matrix depends only on `fov`, `aspect`, and clip planes; panning/tilting the camera during exposure modifies only the view matrix. Removing this eliminates up to 64 redundant 4x4 matrix calculations per shot.
+  - Pre-computed `DEG2RAD = Math.PI / 180`, `invSamplesMinus1 = 1 / Math.max(1, samples - 1)`, `invSamples = 1 / Math.max(1, samples)`, and `trajLenMinus1 = trajectory.length - 1` outside the sub-frame loop to replace repeated division with single multiplication.
+- **Fast 32-bit typed array grain generation (`noisePattern` in `app/viewport.tsx`)**:
+  - Replaced 4 individual byte assignments per pixel with a 32-bit `Uint32Array` view (`new Uint32Array(image.data.buffer)`), writing `0xff000000 | (grain << 16) | (grain << 8) | grain` per integer index. This increases grain tile rendering throughput ~4x and reduces loop bytecode overhead.
+- **Autofocus fallback distance probe optimization (`probeFocus` in `app/viewport.tsx`)**:
+  - `getFallbackSubjectM` now calculates `distanceToSquared` in the loop over scene subjects, computing `Math.sqrt` only once on the closest distance.
+  - Removed redundant per-frame shadow material opacity assignment from `poseSubjects` (now performed once on `mount`).
+- **Optics formula simplification (`app/optics.mjs`)**:
+  - Simplified `verticalFieldOfView` to directly calculate `2 * Math.atan(sensorWidthMm / (2 * focalLengthMm * aspect)) * 180 / Math.PI`, avoiding redundant `atan` followed by `tan(atan(x))` transcendental function evaluation while maintaining bit-level precision.
+- **Decoupled histogram sampling from display mode toggle (`app/histogram.tsx`)**:
+  - Separated the image decoding/sampling effect from the canvas rendering effect. Pixel bins (`rBins`, `gBins`, `bBins`, `yBins`) and 99th percentile maximums are computed and cached when `image` changes; switching between "all" / "luminance" / "channels" display modes redraws immediately from cached bins without re-decoding or re-sampling 57,600 pixels.
+  - Optimized 99th percentile search using `bins.slice().sort()` directly on `Uint32Array`.
+- **React render allocation minimization (`app/page.tsx`)**:
+  - Moved static buffer gauge segment array `BUFFER_SEGMENT_INDICES` to module scope.
+  - Made `visibleScaleValues` lazily evaluate only when `activeControl !== null`, skipping 9-element array generation and filter scans during active shooting and panning.
+- **Validation**:
+  - TypeScript check (`tsc --noEmit --incremental false`): 0 errors.
+  - ESLint (`npm run lint`): 0 errors, 0 warnings.
+  - Production build (`vinext build`): clean build.
+  - Test suite (`node --test tests/rendered-html.test.mjs`): **15/15 passing**.
+
+## Captured-photo depth occlusion fix (2026-08-09, uncommitted)
+
+- Root cause confirmed from the capture pipeline: far, moving-subject, and near blur buckets were rendered with separately cleared depth buffers. The later 2D composite therefore painted a moving subject over any real 3D occluder assigned to a different bucket.
+- `app/viewport.tsx` now caches the scene's unique materials. For every exposure sub-frame it first renders the complete scene with material color writes disabled, producing one shared physical depth buffer while preserving each material's existing `depthWrite` behavior. Each blur bucket then renders against that shared depth; only color is cleared between buckets.
+- Renderer automatic clearing, camera layers, clear color, and material `colorWrite` flags are restored after the capture pass, including on failure. Source-contract coverage was added to `tests/rendered-html.test.mjs`.
+- Validation passed: TypeScript completed with zero errors, ESLint completed with zero errors/warnings, the Vinext production build succeeded, and all 15/15 Node tests passed. A fresh local production server was then exercised in the in-app browser: an eight-frame landscape sequence showed the moving white bunny correctly disappearing behind the foreground shrub and a moving deer being clipped by the tree in front of it; the captured-photo viewer and thumbnails retained those occlusions, and the browser console had no errors or warnings. The exact validation server and its two temporary logs were stopped/removed afterwards.
