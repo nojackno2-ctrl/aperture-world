@@ -55,6 +55,7 @@ const MAX_BUFFER = 300;
 /** Card write speed: one frame leaves the buffer every this many ms (10 fps). */
 const BUFFER_WRITE_MS = 100;
 const BUFFER_SEGMENTS = 12;
+const BUFFER_SEGMENT_INDICES = Array.from({ length: BUFFER_SEGMENTS }, (_, index) => index);
 /** Frames the memory card holds. Shooting stops when it fills, like a real body. */
 const CARD_CAPACITY = 2000;
 
@@ -795,7 +796,9 @@ export default function Home() {
   const activeOptions = activeControl === "shutter" ? SHUTTER_SCALE_OPTIONS : activeControl === "aperture" ? apertureOptions : activeControl === "iso" ? ISO_SCALE_OPTIONS : EXPOSURE_COMPENSATIONS;
   const activeRawValue = activeControl === "shutter" ? shutter : activeControl === "aperture" ? aperture : activeControl === "iso" ? usingAutoIso ? ISO_AUTO_SCALE_VALUE : iso : exposureComp;
   const activeIndex = Math.max(0, activeOptions.indexOf(activeRawValue));
-  const visibleScaleValues = Array.from({ length: 9 }, (_, offset) => ({ index: clamp(activeIndex + offset - 4, 0, activeOptions.length - 1), position: offset * 12.5 })).filter((item, index, list) => list.findIndex(candidate => candidate.index === item.index) === index);
+  const visibleScaleValues = activeControl
+    ? Array.from({ length: 9 }, (_, offset) => ({ index: clamp(activeIndex + offset - 4, 0, activeOptions.length - 1), position: offset * 12.5 })).filter((item, index, list) => list.findIndex(candidate => candidate.index === item.index) === index)
+    : [];
   const activeLabel = activeControl === "shutter" ? "快門" : activeControl === "aperture" ? "光圈" : activeControl === "iso" ? "ISO" : "曝光值";
   const formatControlValue = (control: MobileControl | null, value: number) => control === "shutter" ? shutterLabel(value) : control === "aperture" ? `F${value}` : control === "iso" ? value === ISO_AUTO_SCALE_VALUE ? "AUTO" : `${value}` : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
   const setActiveValue = (nextIndex: number) => {
@@ -985,7 +988,7 @@ export default function Home() {
             <div className={`buffer-gauge ${bufferCount > 0 ? "active" : ""} ${bufferCount >= MAX_BUFFER ? "full" : ""}`} role="status" aria-label={`緩衝記憶體：${bufferCount} / ${MAX_BUFFER} 張`}>
               <b>{MAX_BUFFER - bufferCount}</b>
               <span className="buffer-segments" aria-hidden="true">
-                {Array.from({ length: BUFFER_SEGMENTS }, (_, index) => (
+                {BUFFER_SEGMENT_INDICES.map(index => (
                   <i key={index} className={bufferCount / MAX_BUFFER > index / BUFFER_SEGMENTS ? "lit" : ""} />
                 ))}
               </span>

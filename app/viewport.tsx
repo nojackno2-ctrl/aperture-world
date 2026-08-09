@@ -20,7 +20,7 @@ export type FocusReading = { focusM: number; subjectM: number };
 export type LightReading = { ev: number };
 type Engine = {
   THREE: ThreeRuntime; renderer: WebGLRenderer; camera: PerspectiveCamera; built: BuiltWorld | null; sceneKey: SceneKey | null; elapsed: number; epoch: number; focus: FocusReading; probedAt: number;
-  pixelRatio: number; maximumPixelRatio: number; projectionKey: string; scratch: ScratchPool;
+  pixelRatio: number; maximumPixelRatio: number; projectionKey: string; scratch: ScratchPool; captureMaterials: Material[];
   aimCamera: (focalOverride?: number) => void; poseSubjects: (seconds: number) => void; castCenter: (x: number, y: number) => Intersection[]; probeFocus: (hits?: Intersection[]) => FocusReading; probeLight: (hits?: Intersection[]) => LightReading; mount: (key: SceneKey, sceneModule: SceneModule) => void; select: (key: SceneKey) => void; wake: () => void; teardown: () => void;
 };
 export type CaptureRequest = { focalMm: number; fNumber: number; shutterSeconds: number; brightness: number; noise: number; shakePx: number; lookTrajectory?: { yaw: number; pitch: number }[] };
@@ -43,6 +43,7 @@ const PERFORMANCE_SAMPLE_MS = 1000;
 const LIGHT_METER_MS = 160;
 /** A reflected-light meter uses the same third-stop ladder as the camera controls; finer readings cannot change a setting. */
 const METER_STEP_EV = 1 / 3;
+const DEG2RAD = Math.PI / 180;
 
 type Scratch = { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D };
 /** Surfaces a capture rewrites from scratch every time, so they can outlive one shot. */
@@ -72,11 +73,11 @@ function noisePattern(pool: ScratchPool, context: CanvasRenderingContext2D, seed
   const image = pool.noise?.image ?? tile.context.createImageData(96, 96);
   pool.noise = { tile, image };
   let value = seed;
-  for (let index = 0; index < image.data.length; index += 4) {
+  const data32 = new Uint32Array(image.data.buffer);
+  for (let index = 0; index < data32.length; index += 1) {
     value = (value * 1103515245 + 12345) % 2147483648;
-    const grain = 96 + (value / 2147483648) * 128;
-    image.data[index] = image.data[index + 1] = image.data[index + 2] = grain;
-    image.data[index + 3] = 255;
+    const grain = (96 + (value / 2147483648) * 128) | 0;
+    data32[index] = 0xff000000 | (grain << 16) | (grain << 8) | grain;
   }
   tile.context.putImageData(image, 0, 0);
   return context.createPattern(tile.canvas, "repeat");
@@ -84,6 +85,16 @@ function noisePattern(pool: ScratchPool, context: CanvasRenderingContext2D, seed
 
 function firstMaterial(material: Material | Material[] | undefined) {
   return Array.isArray(material) ? material[0] : material;
+}
+
+function collectMaterials(root: Object3D) {
+  const materials = new Set<Material>();
+  root.traverse(object => {
+    const material = (object as Object3D & { material?: Material | Material[] }).material;
+    if (Array.isArray(material)) material.forEach(item => materials.add(item));
+    else if (material) materials.add(material);
+  });
+  return [...materials];
 }
 
 const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene, focal, yaw, pitch, aimX, aimY, frozen = false, onFocus, onLight, onReady }, ref) {
@@ -113,7 +124,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 3000);
       camera.rotation.order = "YXZ";
       const noop = () => {};
-      const engine: Engine = { THREE, renderer, camera, built: null, sceneKey: null, elapsed: 0, epoch: performance.now(), focus: { focusM: 0, subjectM: 0 }, probedAt: 0, pixelRatio: 1, maximumPixelRatio: 1, projectionKey: "", scratch: { layers: [], composite: null, thumb: null, noise: null }, aimCamera: noop, poseSubjects: noop, castCenter: () => [], probeFocus: () => ({ focusM: INFINITY_FOCUS_M, subjectM: 0 }), probeLight: () => ({ ev: 0 }), mount: noop, select: noop, wake: noop, teardown: noop };
+      const engine: Engine = { THREE, renderer, camera, built: null, sceneKey: null, elapsed: 0, epoch: performance.now(), focus: { focusM: 0, subjectM: 0 }, probedAt: 0, pixelRatio: 1, maximumPixelRatio: 1, projectionKey: "", scratch: { layers: [], composite: null, thumb: null, noise: null }, captureMaterials: [], aimCamera: noop, poseSubjects: noop, castCenter: () => [], probeFocus: () => ({ focusM: INFINITY_FOCUS_M, subjectM: 0 }), probeLight: () => ({ ev: 0 }), mount: noop, select: noop, wake: noop, teardown: noop };
       engineRef.current = engine;
 
       const graphics = renderer.getContext();
@@ -148,6 +159,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         engine.aimCamera();
         engine.wake();
       };
+
       const observer = new ResizeObserver(resize);
       observer.observe(canvas);
       resize();
@@ -234,7 +246,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         const view = viewRef.current, world = engine.built?.world;
         if (!world) return;
         camera.position.set(0, world.cameraHeight, 0);
-        camera.rotation.set((view.pitch + world.pitch) * Math.PI / 180, view.yaw * Math.PI / 180, 0);
+        camera.rotation.set((view.pitch + world.pitch) * DEG2RAD, view.yaw * DEG2RAD, 0);
         const takingFocal = focalOverride ?? view.focal;
         const projectionKey = `${takingFocal}:${camera.aspect}`;
         if (projectionKey !== engine.projectionKey) {
@@ -261,7 +273,6 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           const shadow = built.shadows[index];
           if (shadow) { shadow.position.set(pose.x, 0.02, pose.z); shadow.visible = mesh.visible; }
         });
-        if (built.shadows[0]) built.shadows[0].material.opacity = 0.24;
       };
 
       // One ray through a point on the sensor, sorted near to far. Autofocus and
@@ -295,14 +306,14 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         };
 
         const getFallbackSubjectM = () => {
-          let minDistance = Infinity;
+          let minDistanceSq = Infinity;
           let closestSubjectM = (WORLD[built.key] ?? WORLD.landscape).focus;
           for (const s of built.subjects) {
             if (s.visible !== false) {
-              const dist = camera.position.distanceTo(s.position);
-              if (dist < minDistance) {
-                minDistance = dist;
-                closestSubjectM = dist;
+              const distSq = camera.position.distanceToSquared(s.position);
+              if (distSq < minDistanceSq) {
+                minDistanceSq = distSq;
+                closestSubjectM = Math.sqrt(distSq);
               }
             }
           }
@@ -377,12 +388,14 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         const built = buildScene(THREE as unknown as typeof import("three"), key, geometryUtils.mergeGeometries, sceneModule) as unknown as BuiltWorld;
         built.key = key;
         engine.built = built;
+        engine.captureMaterials = collectMaterials(built.scene);
         subjectRoots = new Set(built.subjects);
         engine.elapsed = 0;
         engine.epoch = performance.now();
         engine.focus = { focusM: 0, subjectM: 0 };
         engine.probedAt = 0;
         engine.poseSubjects(0);
+        if (built.shadows[0]) built.shadows[0].material.opacity = 0.24;
         renderer.setClearColor(0x000000, 0);
         resize();
         engine.wake();
@@ -417,6 +430,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
         engine.mount = noop;
         engine.select = noop;
         disposeBuiltWorld();
+        engine.captureMaterials = [];
         // Release the capture surfaces: five full-resolution canvases can be tens
         // of megabytes of backing store the page no longer has any use for.
         engine.scratch = { layers: [], composite: null, thumb: null, noise: null };
@@ -486,28 +500,31 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       const layers = BUCKETS.map((_, index) => (pool.layers[index] = reuseScratch(pool.layers[index] ?? null, width, height)));
       const shakeRadians = ((request.shakePx / width) * verticalFieldOfView(request.focalMm, camera.aspect) * camera.aspect * Math.PI) / 180;
       const shakeAngle = (engine.elapsed % 1) * Math.PI * 2;
+      const invSamplesMinus1 = 1 / Math.max(1, samples - 1);
+      const invSamples = 1 / Math.max(1, samples);
+      const trajLenMinus1 = trajectory.length - 1;
 
       // Additive accumulation averages the sub-frames exactly. Plain source-over
       // at alpha 1/N converges to 1-(1-1/N)^N of the true value, darkening every shot.
       for (const layer of layers) { layer.context.globalAlpha = 1 / samples; layer.context.globalCompositeOperation = "lighter"; }
       for (const [step] of poses.entries()) {
-        const fraction = step / Math.max(1, samples - 1);
-        const trajIndex = fraction * (trajectory.length - 1);
+        const fraction = step * invSamplesMinus1;
+        const trajIndex = fraction * trajLenMinus1;
         const idx0 = Math.floor(trajIndex);
-        const idx1 = Math.min(trajectory.length - 1, Math.ceil(trajIndex));
+        const idx1 = Math.min(trajLenMinus1, Math.ceil(trajIndex));
         const tFrac = trajIndex - idx0;
         const curYaw = trajectory[idx0].yaw + (trajectory[idx1].yaw - trajectory[idx0].yaw) * tFrac;
         const curPitch = trajectory[idx0].pitch + (trajectory[idx1].pitch - trajectory[idx0].pitch) * tFrac;
 
-        const drift = (step / Math.max(1, samples - 1) - 0.5) * shakeRadians;
+        const subDrift = (fraction - 0.5) * shakeRadians;
         // The trajectory arrives in viewfinder degrees relative to the scene's base
         // tilt, so it takes the same conversion aimCamera uses. Skip it and the shot
         // is fired from a different direction than the one the user framed.
-        camera.rotation.y = (curYaw * Math.PI) / 180 + Math.cos(shakeAngle) * drift;
-        camera.rotation.x = ((curPitch + built.world.pitch) * Math.PI) / 180 + Math.sin(shakeAngle) * drift;
-        camera.updateProjectionMatrix();
+        camera.rotation.y = curYaw * DEG2RAD + Math.cos(shakeAngle) * subDrift;
+        camera.rotation.x = (curPitch + built.world.pitch) * DEG2RAD + Math.sin(shakeAngle) * subDrift;
+        const stepTime = engine.elapsed + span * step * invSamples;
         built.subjects.forEach((mesh, index) => {
-          const subjectPose = subjectPath(built.key, engine.elapsed + (span * step) / Math.max(1, samples), built.key === "bird" ? index / built.subjects.length : 0, index);
+          const subjectPose = subjectPath(built.key, stepTime, built.key === "bird" ? index / built.subjects.length : 0, index);
           mesh.position.set(subjectPose.x, subjectPose.y, subjectPose.z);
           const yawRad = mesh.type === "Group" ? (subjectPose.yaw * Math.PI) / 180 : Math.atan2(-subjectPose.x, -subjectPose.z);
           mesh.rotation.order = "YXZ";
@@ -515,12 +532,39 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
           const shadow = built.shadows[index];
           if (shadow) shadow.position.set(subjectPose.x, 0.02, subjectPose.z);
         });
-        BUCKETS.forEach((bucket, index) => {
-          camera.layers.set(bucket);
-          renderer.setClearColor(0x000000, bucket === LAYER.far ? 1 : 0);
+        // Each blur bucket needs the complete scene's depth buffer. Rendering a
+        // subject layer by itself loses every tree, rail, vehicle, or person in
+        // front of it, and the later 2D composite then paints moving objects on
+        // top of the photograph. Populate depth once with normal materials but
+        // color writes disabled, then reuse that depth while clearing only color
+        // between buckets. Materials whose depthWrite is false (rain, glows,
+        // contact shadows) remain non-occluding just as they are in live view.
+        const previousAutoClear = renderer.autoClear;
+        const colorWriteStates = engine.captureMaterials.map(material => material.colorWrite);
+        try {
+          renderer.autoClear = false;
+          camera.layers.enableAll();
+          renderer.setClearColor(0x000000, 1);
+          renderer.clear(true, true, true);
+          engine.captureMaterials.forEach(material => { material.colorWrite = false; });
           renderer.render(built.scene, camera);
-          layers[index].context.drawImage(source, 0, 0, source.width, source.height, 0, 0, width, height);
-        });
+          engine.captureMaterials.forEach((material, index) => { material.colorWrite = colorWriteStates[index]; });
+
+          BUCKETS.forEach((bucket, index) => {
+            if (index > 0) {
+              renderer.setClearColor(0x000000, 0);
+              renderer.clear(true, false, false);
+            }
+            camera.layers.set(bucket);
+            renderer.render(built.scene, camera);
+            layers[index].context.drawImage(source, 0, 0, source.width, source.height, 0, 0, width, height);
+          });
+        } finally {
+          engine.captureMaterials.forEach((material, index) => { material.colorWrite = colorWriteStates[index]; });
+          renderer.autoClear = previousAutoClear;
+          camera.layers.enableAll();
+          renderer.setClearColor(0x000000, 0);
+        }
       }
       for (const layer of layers) { layer.context.globalAlpha = 1; layer.context.globalCompositeOperation = "source-over"; }
 
