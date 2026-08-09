@@ -9,6 +9,38 @@ import { LAYER, WORLD, circleOfConfusionMm, defocusBlurPixels, depthBlurPlan, vi
 
 const templateRoot = new URL("../", import.meta.url);
 
+const SCENE_KEYS = Object.keys(WORLD);
+
+/**
+ * The 3D world is no longer one file: the shared modelling kit and the eleven
+ * per-scenario modules are separate so a session downloads only the world it
+ * plays. Source contracts about "the world" read all of it.
+ */
+async function readWorldSource() {
+  const parts = await Promise.all([
+    readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/scene-kit.mjs", import.meta.url), "utf8"),
+    ...SCENE_KEYS.map(key => readFile(new URL(`../app/scenes/${key}.mjs`, import.meta.url), "utf8")),
+  ]);
+  return parts.join("\n");
+}
+
+/**
+ * Every scenario owns a module that builds its world and its subjects, and
+ * `scene3d.mjs` reaches it through a literal `import()` — a computed specifier
+ * would collapse the eleven chunks back into one.
+ */
+async function assertEveryScenarioHasItsOwnModule() {
+  const loader = await readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8");
+  for (const key of SCENE_KEYS) {
+    const scene = await readFile(new URL(`../app/scenes/${key}.mjs`, import.meta.url), "utf8");
+    assert.match(scene, /export function terrain\(THREE, scene\)/, `${key} needs a 3D builder`);
+    assert.match(scene, /export function cast\(THREE, scene, subjects, shadows\)/, `${key} needs its moving subjects`);
+    assert.match(loader, new RegExp(`${key}: \\(\\) => import\\("\\./scenes/${key}\\.mjs"\\)`), `${key} needs its own chunk`);
+  }
+  assert.doesNotMatch(loader, /import\(`|import\(["'][^"']*\$\{/, "a computed import specifier would defeat the per-scene split");
+}
+
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -60,7 +92,7 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8"),
+    readWorldSource(),
   ]);
   // Focus is aimed, never dialled: no AF mode selector and no manual distance slider.
   assert.doesNotMatch(page, /AF-S|AF-C|FocusMode/);
@@ -201,6 +233,9 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   // Drive modes (連拍/過片模式) and buffer memory HUD
   assert.match(page, /DRIVE_MODES/, "defines drive mode options");
   assert.match(page, /單張拍攝|高速連拍|中速連拍|低速連拍/, "includes Sony a1-style drive modes");
+  assert.match(styles, /\.hud-quick-modes \.mode-icon-trigger\.active,[\s\S]*?filter: none;/, "open quick-mode pickers do not grow a translucent shadow box");
+  assert.match(styles, /\.hud-quick-modes \.mode-glyph \{[\s\S]*?text-shadow: none;/, "the exposure-mode glyph has no clipped background-like shadow");
+  assert.match(styles, /\.hud-quick-modes \.drive-icon-trigger \.drive-svg-icon \{[\s\S]*?filter: none;/, "the drive icon has no clipped background-like shadow");
   assert.match(page, /className="drive-strip/, "renders drive mode strip in the HUD top");
   assert.match(page, /className="drive-section/, "renders drive mode section in the parameter deck");
   assert.match(page, /className="mobile-drive-strip/, "renders mobile drive mode selector");
@@ -225,7 +260,7 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(world3d, /castShadow = true/);
   assert.doesNotMatch(world3d, /LIGHT_CYCLES|lightExposureAt|sun\.position\.set\([^\n]*elapsed/);
   assert.doesNotMatch(world3d, /(?:bird|sports|portrait)_subject\.jpg/);
-  for (const key of Object.keys(WORLD)) assert.match(world3d, new RegExp(`\\b${key}\\(THREE, scene\\)`), `${key} needs a 3D builder`);
+  await assertEveryScenarioHasItsOwnModule();
   assert.match(world3d, /mergeGeometries/);
   assert.match(page, /horizontalFieldOfView\(focal\)/);
   assert.match(page, /LOOK_LIMITS/);
@@ -284,11 +319,13 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(world3d, /castShadow = true/);
   assert.doesNotMatch(world3d, /LIGHT_CYCLES|lightExposureAt|sun\.position\.set\([^\n]*elapsed/);
   assert.doesNotMatch(world3d, /(?:bird|sports|portrait)_subject\.jpg/);
-  for (const key of Object.keys(WORLD)) assert.match(world3d, new RegExp(`\\b${key}\\(THREE, scene\\)`), `${key} needs a 3D builder`);
+  await assertEveryScenarioHasItsOwnModule();
   assert.match(styles, /@media\(max-width:720px\).*\.mobile-console\{display:block/s);
   assert.match(styles, /html:fullscreen \.game-shell/);
   assert.match(styles, /\.live-canvas\{position:absolute/);
-  assert.match(layout, /og\.png/);
+  // The social card is a photograph at the 1200x630 standard, so it ships as JPEG.
+  assert.match(layout, /og\.jpg/);
+  assert.match(layout, /width: 1200, height: 630/);
   assert.match(packageJson, /"name": "aperture-world"/);
   assert.match(packageJson, /"three": "\^?0\.\d+\.\d+"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
@@ -387,7 +424,7 @@ test("the live renderer targets 120 FPS with a bounded adaptive GPU resolution",
 
   const [viewport, world3d] = await Promise.all([
     readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8"),
+    readWorldSource(),
   ]);
   assert.match(viewport, /powerPreference: "high-performance"/);
   assert.match(viewport, /preserveDrawingBuffer: false/);
@@ -404,7 +441,7 @@ test("idle work, GPU resources, capture memory, network caching, and unused star
     readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/three-lifecycle.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/three-runtime.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8"),
+    readWorldSource(),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
@@ -426,7 +463,33 @@ test("idle work, GPU resources, capture memory, network caching, and unused star
   assert.match(viewport, /if \(!viewRef\.current\.frozen\) scheduleFrame\(\)/, "a frozen view must stop requesting frames");
   assert.match(viewport, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
   assert.match(viewport, /disposeObjectTree\(engine\.built\.scene, renderer\)/);
-  assert.match(viewport, /const output = layers\[0\]/, "capture reuses a finished layer instead of allocating a fifth full-size canvas");
+  // A Hi+ burst fires thirty captures a second. The intermediate surfaces survive
+  // between shots; only the canvas an asynchronous toBlob is still encoding is
+  // allocated per capture, so the next frame of a burst cannot paint over it.
+  assert.match(viewport, /pool\.layers\[index\] = reuseScratch\(/, "burst captures reuse the depth-layer canvases");
+  assert.match(viewport, /pool\.composite = reuseScratch\(/, "burst captures reuse the compositing canvas");
+  assert.match(viewport, /pool\.thumb = reuseScratch\(/, "burst captures reuse the thumbnail canvas");
+  assert.match(viewport, /pool\.noise = \{ tile, image \}/, "the grain tile is generated once and repainted in place");
+  assert.match(viewport, /const output = scratchCanvas\(width, height\)/, "the surface handed to the asynchronous toBlob encode is never reused");
+  assert.match(viewport, /engine\.scratch = \{ layers: \[\], composite: null, thumb: null, noise: null \}/, "teardown releases the capture surfaces");
+  // Autofocus and the light meter read the same point on the sensor.
+  assert.match(viewport, /const shared = view\.aimX === 0 && view\.aimY === 0 \? engine\.castCenter\(0, 0\) : undefined/, "one centre ray answers both AF and metering");
+  assert.match(viewport, /engine\.probeFocus\(shared\)/);
+  assert.match(viewport, /engine\.probeLight\(shared\)/);
+  assert.match(viewport, /const METER_STEP_EV = 1 \/ 3/, "the reflected-light meter uses the camera's third-stop ladder");
+  assert.match(viewport, /Math\.round\(light\.ev \/ METER_STEP_EV\) \* METER_STEP_EV/, "meter readings are quantised to third-stops");
+  assert.match(viewport, /lightRef\.current\?\.\(\{ ev: meteredEv \}\)/, "React receives the quantised meter value");
+  assert.doesNotMatch(viewport, /Math\.abs\(light\.ev - lastLightEv\)/, "raw EV changes must not trigger meter reports");
+  // A session downloads the world it plays; the other ten arrive in the background.
+  assert.match(viewport, /await loadSceneModule\(firstKey\)/, "the played scenario is fetched as its own chunk");
+  assert.match(viewport, /if \(disposed \|\| engine\.sceneKey !== key\) return/, "a superseded scene load must not mount over a newer one");
+  assert.match(viewport, /setTimeout\(\(\) => prefetchOtherScenes\(firstKey\), 1200\)/, "switching scenes stays immediate");
+  assert.match(viewport, /window\.clearTimeout\(warmTimer\)/, "teardown cancels the background warm-up");
+  // Renders that cannot change a pixel: a look held against its limit, and a
+  // meter reading that comes back at the same stop.
+  assert.equal((page.match(/prev\.yaw === nextLook\.yaw && prev\.pitch === nextLook\.pitch \? prev : nextLook/g) ?? []).length, 2, "both look paths bail out when the clamp returns the same angles");
+  assert.match(page, /const \[lightEv, setLightEv\] = useState\(0\)/, "the meter is a bare number so an unchanged stop bails out");
+  assert.doesNotMatch(page, /setLightRead\(\{/, "a fresh reading object would defeat that bail-out");
   assert.match(viewport, /import\("\.\/three-runtime"\)/, "the viewport must load the curated renderer boundary");
   assert.doesNotMatch(viewport, /await import\("three"\)|Promise\.all\(\[import\("three"\)/, "a runtime namespace import would retain Three.js APIs the scenes never use");
   assert.match(threeRuntime, /WebGLRenderer/);

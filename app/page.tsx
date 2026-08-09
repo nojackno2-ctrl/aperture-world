@@ -9,6 +9,16 @@ const Viewport3D = dynamic(() => import("./viewport"), {
   ssr: false,
   loading: () => <div className="viewport-stage" />
 });
+
+// The renderer is the largest thing this page downloads and the canvas mounts
+// straight away, but the chunks were only requested from the viewport's mount
+// effect — behind hydration. Requesting them the moment this module executes
+// overlaps the transfer with hydration instead of queueing behind it. The
+// module registry dedupes, so the viewport's own imports resolve immediately.
+if (typeof window !== "undefined") {
+  void import("./three-runtime");
+  void import("three/addons/utils/BufferGeometryUtils.js");
+}
 import { Histogram } from "./histogram";
 import { LOOK_LIMITS, WORLD, depthBlurPlan } from "./world.mjs";
 
@@ -169,7 +179,10 @@ export default function Home() {
   const [modeMenuOpen, setModeMenuOpen] = useState(false), [driveMenuOpen, setDriveMenuOpen] = useState(false);
   const [exposureState, setExposureState] = useState<ExposureState | null>(null);
   const [aiming, setAiming] = useState(false), [focusRead, setFocusRead] = useState<FocusReading | null>(null), [afFrameSize, setAfFrameSize] = useState<AfFrameSize>("small");
-  const [lightRead, setLightRead] = useState<LightReading>({ ev: 0 });
+  // The meter is stored as the bare number it is. A fresh `{ ev }` object every
+  // reading defeats React's own bail-out, so an unchanged stop still re-rendered.
+  const [lightEv, setLightEv] = useState(0);
+  const onLightReading = useCallback((reading: LightReading) => setLightEv(reading.ev), []);
   const [bufferCount, setBufferCount] = useState(0);
   const [isBursting, setIsBursting] = useState(false);
   // The real write-out queue: fully-formed Photos waiting to land in `shots`.
@@ -212,7 +225,7 @@ export default function Home() {
     iso: mode !== "AUTO",
   }), [mode, usingAutoIso]);
 
-  const sceneLightEv = scene.sceneEv + lightRead.ev;
+  const sceneLightEv = scene.sceneEv + lightEv;
   const targetEv = sceneLightEv + meteringBias - (mode === "M" && !usingAutoIso ? 0 : exposureComp);
 
   const effective = useMemo(() => {
@@ -674,7 +687,9 @@ export default function Home() {
             if (exposureStateRef.current && exposureStateRef.current.trajectory.length < 300) {
               exposureStateRef.current.trajectory.push({ yaw: nextLook.yaw, pitch: nextLook.pitch });
             }
-            return nextLook;
+            // Held against a look limit the clamp returns the same angles frame
+            // after frame; keeping the previous object lets React skip the render.
+            return prev.yaw === nextLook.yaw && prev.pitch === nextLook.pitch ? prev : nextLook;
           });
         });
       }
@@ -707,7 +722,7 @@ export default function Home() {
     setLook({ yaw: 0, pitch: 0 });
     setResult(null);
     setFocusRead(null);
-    setLightRead({ ev: 0 });
+    setLightEv(0);
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -746,7 +761,7 @@ export default function Home() {
     if (exposureStateRef.current && exposureStateRef.current.trajectory.length < 300) {
       exposureStateRef.current.trajectory.push({ yaw: nextLook.yaw, pitch: nextLook.pitch });
     }
-    setLook(nextLook);
+    setLook(prev => prev.yaw === nextLook.yaw && prev.pitch === nextLook.pitch ? prev : nextLook);
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -838,7 +853,7 @@ export default function Home() {
         setFocal(lens.focals[nextIndex]);
       }}
     >
-      <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} yaw={look.yaw} pitch={look.pitch} aimX={0} aimY={0} frozen={!started || Boolean(result) || libraryOpen} onFocus={setFocusRead} onLight={setLightRead} />
+      <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} yaw={look.yaw} pitch={look.pitch} aimX={0} aimY={0} frozen={!started || Boolean(result) || libraryOpen} onFocus={setFocusRead} onLight={onLightReading} />
       <div className="viewfinder-shade" />
       <div className="grid-lines"><i /><i /><i /><i /></div>
 
