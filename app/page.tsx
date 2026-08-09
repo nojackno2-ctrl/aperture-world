@@ -15,13 +15,13 @@ import { LOOK_LIMITS, WORLD, depthBlurPlan } from "./world.mjs";
 type Mode = "AUTO" | "P" | "S" | "A" | "M";
 type DriveMode = "single" | "burst_hi" | "burst_mid" | "burst_lo";
 type MeteringMode = "multi" | "center" | "spot" | "average" | "highlight";
+type AfFrameSize = "small" | "medium" | "large";
 type SceneKey = keyof typeof WORLD;
 type MobileControl = "shutter" | "aperture" | "exposure" | "iso";
 type Scenario = { id: SceneKey; eyebrow: string; title: string; brief: string; lesson: string; sceneEv: number; speed: number; focal: [number, number]; aperture: [number, number]; minShutter: number; accent: string };
 type Photo = { id: number; scene: SceneKey; score: number; title: string; settings: string; image: Blob; thumb: string; params: { mode: string; drive: string; shutter: string; aperture: string; iso: string; focal: string; ev: string; lens: string; focus: string } };
 type Result = { photoId: number; score: number; title: string; notes: string[]; scene: SceneKey; params?: { mode: string; drive: string; shutter: string; aperture: string; iso: string; focal: string; ev: string; lens: string; focus: string } };
 type Look = { yaw: number; pitch: number };
-type Aim = { x: number; y: number };
 type ExposureState = { startTime: number; durationSeconds: number; remainingSeconds: number; progress: number; trajectory: Look[] };
 
 type DriveOption = {
@@ -165,10 +165,10 @@ function BlobPhoto({ blob, alt }: { blob: Blob; alt: string }) {
 }
 
 export default function Home() {
-  const [sceneIndex, setSceneIndex] = useState(0), [mode, setMode] = useState<Mode>("P"), [driveMode, setDriveMode] = useState<DriveMode>("single"), [aperture, setAperture] = useState(5.6), [shutter, setShutter] = useState(1 / 125), [iso, setIso] = useState(200), [isoAuto, setIsoAuto] = useState(true), [focal, setFocal] = useState(50), [meteringMode, setMeteringMode] = useState<MeteringMode>("multi"), [exposureComp, setExposureComp] = useState(0), [captured, setCaptured] = useState(false), [lensId, setLensId] = useState("standard"), [look, setLook] = useState<Look>({ yaw: 0, pitch: 0 }), [mobileControl, setMobileControl] = useState<MobileControl>("shutter"), [isFullscreen, setIsFullscreen] = useState(false), [immersiveFallback, setImmersiveFallback] = useState(false), [hudVisible, setHudVisible] = useState(true), [deckOpen, setDeckOpen] = useState(false), [started, setStarted] = useState(false);
+  const [sceneIndex, setSceneIndex] = useState(0), [mode, setMode] = useState<Mode>("P"), [driveMode, setDriveMode] = useState<DriveMode>("single"), [aperture, setAperture] = useState(5.6), [shutter, setShutter] = useState(1 / 125), [iso, setIso] = useState(200), [isoAuto, setIsoAuto] = useState(true), [focal, setFocal] = useState(50), [meteringMode, setMeteringMode] = useState<MeteringMode>("multi"), [exposureComp, setExposureComp] = useState(0), [captured, setCaptured] = useState(false), [lensId, setLensId] = useState("standard"), [look, setLook] = useState<Look>({ yaw: 0, pitch: 0 }), [mobileControl, setMobileControl] = useState<MobileControl>("shutter"), [isFullscreen, setIsFullscreen] = useState(false), [fullscreenError, setFullscreenError] = useState<string | null>(null), [hudVisible, setHudVisible] = useState(true), [deckOpen, setDeckOpen] = useState(false), [started, setStarted] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false), [driveMenuOpen, setDriveMenuOpen] = useState(false);
   const [exposureState, setExposureState] = useState<ExposureState | null>(null);
-  const [aim, setAim] = useState<Aim>({ x: .5, y: .5 }), [aiming, setAiming] = useState(false), [focusRead, setFocusRead] = useState<FocusReading | null>(null);
+  const [aiming, setAiming] = useState(false), [focusRead, setFocusRead] = useState<FocusReading | null>(null), [afFrameSize, setAfFrameSize] = useState<AfFrameSize>("small");
   const [lightRead, setLightRead] = useState<LightReading>({ ev: 0 });
   const [bufferCount, setBufferCount] = useState(0);
   const [isBursting, setIsBursting] = useState(false);
@@ -315,23 +315,36 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const syncAim = () => { const locked = document.pointerLockElement === stageRef.current; setAiming(locked); if (locked) setAim({ x: .5, y: .5 }); };
+    const syncAim = () => setAiming(document.pointerLockElement === stageRef.current);
     document.addEventListener("pointerlockchange", syncAim);
     return () => document.removeEventListener("pointerlockchange", syncAim);
   }, []);
 
   useEffect(() => {
-    const syncFullscreen = () => { setIsFullscreen(Boolean(document.fullscreenElement)); if (document.fullscreenElement) setImmersiveFallback(false); };
+    const syncFullscreen = () => {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (active) setFullscreenError(null);
+    };
     document.addEventListener("fullscreenchange", syncFullscreen);
     return () => document.removeEventListener("fullscreenchange", syncFullscreen);
   }, []);
 
   const toggleFullscreen = useCallback(async () => {
-    if (immersiveFallback) { setImmersiveFallback(false); return; }
     if (document.fullscreenElement) { await document.exitFullscreen(); return; }
-    try { await document.documentElement.requestFullscreen({ navigationUI: "hide" }); }
-    catch { setImmersiveFallback(true); window.scrollTo({ top: 0, behavior: "smooth" }); }
-  }, [immersiveFallback]);
+    const target = document.documentElement;
+    if (!document.fullscreenEnabled || typeof target.requestFullscreen !== "function") {
+      setFullscreenError("此瀏覽器不支援真正全螢幕。請更新瀏覽器，或將網站加入主畫面後再開啟。");
+      return;
+    }
+    try {
+      // The Fullscreen API itself removes browser chrome. Omitting optional
+      // arguments keeps this working on mobile engines with stricter signatures.
+      await target.requestFullscreen();
+    } catch {
+      setFullscreenError("瀏覽器拒絕進入真正全螢幕。請再點一次全螢幕，或將網站加入主畫面後開啟。");
+    }
+  }, []);
 
   const capture = useCallback(() => {
     if (exposureStateRef.current || libraryOpen || result || !started) return;
@@ -697,26 +710,16 @@ export default function Home() {
     setLightRead({ ev: 0 });
   };
 
-  const updateAim = (event: React.PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    setAim({
-      x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
-      y: clamp((event.clientY - rect.top) / rect.height, 0, 1),
-    });
-  };
-
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (result) return;
     if (event.pointerType === "mouse") {
       if (!aiming) {
-        updateAim(event);
         if (requestAim()) return;
       }
       startBurst();
       return;
     }
     if (aiming) return;
-    updateAim(event);
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerDragRef.current = {
       startX: event.clientX,
@@ -729,7 +732,6 @@ export default function Home() {
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (aiming) return;
-    updateAim(event);
     const drag = pointerDragRef.current;
     if (!drag) return;
     const deltaX = event.clientX - drag.startX;
@@ -757,7 +759,8 @@ export default function Home() {
     pointerDragRef.current = null;
     if (drag?.moved) return;
     if (result) { setResult(null); return; }
-    capture();
+    // Touch input only turns the camera. The dedicated shutter remains the only
+    // capture target, avoiding accidental photos while the player is aiming.
   };
 
   const mobileOptions = mobileControl === "shutter" ? SHUTTER_SCALE_OPTIONS : mobileControl === "aperture" ? apertureOptions : mobileControl === "iso" ? ISO_SCALE_OPTIONS : EXPOSURE_COMPENSATIONS;
@@ -786,11 +789,11 @@ export default function Home() {
     if (activeControl === "shutter") setShutter(value); else if (activeControl === "aperture") setAperture(value); else if (activeControl === "iso") { if (value === ISO_AUTO_SCALE_VALUE) setIsoAuto(true); else { setIsoAuto(false); setIso(value); } } else setExposureComp(value);
   };
 
-  const isFs = isFullscreen || immersiveFallback;
+  const isFs = isFullscreen;
   const isSharp = focusBlur <= FOCUS_MISS_PX;
 
   return <main
-    className={`game-shell ${immersiveFallback ? "immersive" : ""} ${captured ? "captured" : ""} ${exposureState ? "is-exposing" : ""} ${isBursting ? "is-bursting" : ""} ${hudVisible ? "" : "hud-off"} ${deckOpen ? "" : "deck-closed"} ${started ? "" : "not-started"}`}
+    className={`game-shell ${captured ? "captured" : ""} ${exposureState ? "is-exposing" : ""} ${isBursting ? "is-bursting" : ""} ${hudVisible ? "" : "hud-off"} ${deckOpen ? "" : "deck-closed"} ${started ? "" : "not-started"}`}
     style={{ "--accent": scene.accent } as React.CSSProperties}
     onPointerDownCapture={event => {
       if (!activeControl || event.pointerType !== "mouse" || event.button !== 0) return;
@@ -824,7 +827,7 @@ export default function Home() {
       className={`live-stage ${aiming ? "aiming" : ""} ${exposureState ? "exposing" : ""}`}
       role="button"
       tabIndex={0}
-      aria-label="取景器，移動滑鼠轉動視角，對焦框跟著滑鼠，點擊拍攝，滾輪變焦"
+      aria-label="取景器；對焦框固定在正中央；滑鼠移動視角、點擊拍攝、滾輪變焦；觸控拖曳移動視角"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -835,7 +838,7 @@ export default function Home() {
         setFocal(lens.focals[nextIndex]);
       }}
     >
-      <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} yaw={look.yaw} pitch={look.pitch} aimX={aim.x * 2 - 1} aimY={1 - aim.y * 2} frozen={!started || Boolean(result) || libraryOpen} onFocus={setFocusRead} onLight={setLightRead} />
+      <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} yaw={look.yaw} pitch={look.pitch} aimX={0} aimY={0} frozen={!started || Boolean(result) || libraryOpen} onFocus={setFocusRead} onLight={setLightRead} />
       <div className="viewfinder-shade" />
       <div className="grid-lines"><i /><i /><i /><i /></div>
 
@@ -862,7 +865,7 @@ export default function Home() {
       )}
 
       {started && !result && !exposureState && (
-        <div className={`af-frame ${isSharp ? "sharp" : ""} ${aiming ? "aiming" : ""}`} style={{ left: `${aim.x * 100}%`, top: `${aim.y * 100}%` }} aria-hidden="true">
+        <div className={`af-frame af-size-${afFrameSize} ${isSharp ? "sharp" : ""} ${aiming ? "aiming" : ""}`} aria-hidden="true">
           <i /><i /><i /><i />
           <em>{formatFocusDistance(focusM)}</em>
         </div>
@@ -1088,6 +1091,26 @@ export default function Home() {
 
             <Control label="鏡頭焦距 (變焦)" value={`${focal} mm`} helper={`視角 ${horizontalFieldOfView(focal).toFixed(1)}°`} index={Math.max(0, lens.focals.indexOf(focal))} max={lens.focals.length - 1} onChange={v => setFocal(lens.focals[v])} />
 
+            <section className="af-size-setting" aria-labelledby="af-size-label">
+              <div>
+                <span className="section-label" id="af-size-label">AF 對焦框尺寸</span>
+                <small>固定在畫面正中央</small>
+              </div>
+              <div className="af-size-options" role="group" aria-label="AF 對焦框尺寸">
+                {(["small", "medium", "large"] as AfFrameSize[]).map(size => (
+                  <button
+                    key={size}
+                    type="button"
+                    className={afFrameSize === size ? "active" : ""}
+                    aria-pressed={afFrameSize === size}
+                    onClick={() => setAfFrameSize(size)}
+                  >
+                    {size === "small" ? "小" : size === "medium" ? "中" : "大"}
+                  </button>
+                ))}
+              </div>
+            </section>
+
             <section className="iso-auto-row">
               <div>
                 <span className="section-label">ISO AUTO</span>
@@ -1170,7 +1193,7 @@ export default function Home() {
         </div>
         <ul className="start-keys">
           <li><b>滑鼠</b>轉動視角</li>
-          <li><b>對焦框</b>跟著準心</li>
+          <li><b>對焦框</b>固定畫面中央</li>
           <li><b>滾輪</b>變焦</li>
           <li><b>點擊 / 空白鍵</b>快門 (長按連拍)</li>
           <li><b>D</b>過片模式</li>
@@ -1181,6 +1204,15 @@ export default function Home() {
         </ul>
       </div>
     </div>}
+
+    {fullscreenError && (
+      <div className="fullscreen-notice" role="status">
+        <span aria-hidden="true">⛶</span>
+        <b>無法進入真正全螢幕</b>
+        <small>{fullscreenError}</small>
+        <button type="button" aria-label="關閉全螢幕提示" onClick={() => setFullscreenError(null)}>×</button>
+      </div>
+    )}
 
     {libraryOpen && <dialog open className="gallery" aria-modal="true" aria-label="相片庫">
       <button type="button" className="gallery-backdrop" aria-label="關閉相片庫" onClick={closeLibrary} />
