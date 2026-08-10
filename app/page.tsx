@@ -88,18 +88,236 @@ const SCENARIOS: Scenario[] = [
   { id: "airport", eyebrow: "10 · 機場飛機起降", title: "跑道上的鋼鐵巨鳥", brief: "在機場遠處以超長焦鎖定客機高速起降與拉起瞬間。", lesson: "高速運動的大型飛機需要 1/1000 秒以上高速快門凝結機身與氣流，搭配超遠攝鏡頭追焦。", sceneEv: 13.6, speed: 18, focal: [200, 600], aperture: [5.6, 8], minShutter: 1 / 1000, accent: "#fb923c" },
   { id: "outdoor_portrait", eyebrow: "11 · 室外人像", title: "陽光花園戶外人像", brief: "在戶外自然光與樹蔭花景中，拍出柔美背景虛化的人像特寫。", lesson: "戶外人像善用大光圈分離人物與繁雜背景，注意臉部受光與曝光補償避免逆光暗臉。", sceneEv: 12.2, speed: 0.2, focal: [50, 85], aperture: [1.4, 2.8], minShutter: 1 / 250, accent: "#ec4899" },
 ];
-const APERTURES = [1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22];
+const APERTURES = [1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22, 25, 29, 32];
 const SHUTTERS = [1 / 32000, 1 / 25000, 1 / 20000, 1 / 16000, 1 / 12500, 1 / 10000, 1 / 8000, 1 / 6400, 1 / 5000, 1 / 4000, 1 / 3200, 1 / 2500, 1 / 2000, 1 / 1600, 1 / 1250, 1 / 1000, 1 / 800, 1 / 640, 1 / 500, 1 / 400, 1 / 320, 1 / 250, 1 / 200, 1 / 160, 1 / 125, 1 / 100, 1 / 80, 1 / 60, 1 / 50, 1 / 40, 1 / 30, 1 / 25, 1 / 20, 1 / 15, 1 / 13, 1 / 10, 1 / 8, 1 / 6, 1 / 5, 1 / 4, .3, .4, .5, .6, .8, 1, 1.3, 1.6, 2, 2.5, 3.2, 4, 5, 6, 8, 10, 13, 15, 20, 25, 30];
 const SHUTTER_SCALE_OPTIONS = [...SHUTTERS].reverse();
 const ISOS = [50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800, 16000, 20000, 25600, 32000, 40000, 51200, 64000, 80000, 102400];
 const ISO_AUTO_SCALE_VALUE = 999999;
 const ISO_SCALE_OPTIONS = [ISO_AUTO_SCALE_VALUE, ...ISOS];
 const EXPOSURE_COMPENSATIONS = [-3, -2.7, -2.3, -2, -1.7, -1.3, -1, -0.7, -0.3, 0, 0.3, 0.7, 1, 1.3, 1.7, 2, 2.3, 2.7, 3];
-const LENSES = [
-  { id: "standard", name: "24–70 mm F2.8 標準變焦", focals: [24, 28, 35, 50, 70], maxAperture: () => 2.8 },
-  { id: "portrait", name: "70–200 mm F2.8 遠攝變焦", focals: [70, 85, 100, 135, 200], maxAperture: () => 2.8 },
-  { id: "tele", name: "200–600 mm F5.6–6.3 超遠攝變焦", focals: [200, 300, 400, 500, 600], maxAperture: (focal: number) => focal > 300 ? 6.3 : 5.6 },
-  { id: "wildlife", name: "400–800 mm F6.3–8.0 超遠攝變焦", focals: [400, 500, 600, 800], maxAperture: (focal: number) => focal > 600 ? 8.0 : 6.3 },
+
+export type LensCategory = "zoom" | "prime";
+export interface LensSpec {
+  id: string;
+  name: string;
+  category: LensCategory;
+  focals: number[];
+  maxAperture: (focal: number) => number;
+  minAperture: number;
+  filter: string;
+  weight: string;
+  tag: string;
+  desc: string;
+}
+
+const LENSES: LensSpec[] = [
+  // ── 變焦鏡頭群 (ZOOM LENSES) ──
+  {
+    id: "zoom_12_24_f28",
+    name: "12–24 mm F2.8 旗艦超廣角變焦",
+    category: "zoom",
+    focals: [12, 14, 16, 18, 20, 24],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "後置濾鏡",
+    weight: "847 g",
+    tag: "旗艦超廣角大三元",
+    desc: "12mm 極致視角與恆定 F2.8 大光圈，壯闊大景與星空銀河首選。",
+  },
+  {
+    id: "zoom_16_35_f28_ii",
+    name: "16–35 mm F2.8 II 旗艦廣角變焦",
+    category: "zoom",
+    focals: [16, 20, 24, 28, 35],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "82 mm",
+    weight: "547 g",
+    tag: "二代廣角大三元",
+    desc: "二代輕量化廣角大三元，邊角解析度極致銳利，適合風景、建築與街拍。",
+  },
+  {
+    id: "standard",
+    name: "24–70 mm F2.8 II 旗艦標準變焦",
+    category: "zoom",
+    focals: [24, 28, 35, 50, 70],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "82 mm",
+    weight: "695 g",
+    tag: "二代標準鏡皇",
+    desc: "全能標準鏡皇二代，解像力極高、近拍優異且散景柔美，全方位拍攝首選。",
+  },
+  {
+    id: "zoom_28_70_f2",
+    name: "28–70 mm F2.0 旗艦大光圈標準變焦",
+    category: "zoom",
+    focals: [28, 35, 40, 50, 70],
+    maxAperture: () => 2.0,
+    minAperture: 22,
+    filter: "86 mm",
+    weight: "918 g",
+    tag: "F2 恆定超大光圈變焦",
+    desc: "劃時代 F2.0 恆定超大光圈變焦，兼具多支頂級定焦鏡的畫質與迷人散景。",
+  },
+  {
+    id: "portrait",
+    name: "70–200 mm F2.8 II 防手震遠攝變焦",
+    category: "zoom",
+    focals: [70, 85, 100, 135, 200],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "77 mm",
+    weight: "1045 g",
+    tag: "二代望遠鏡皇",
+    desc: "大幅減重 29% 的望遠鏡皇二代，疾速追焦與內建光學防手震，人像與運動利器。",
+  },
+  {
+    id: "zoom_100_400_f45_56",
+    name: "100–400 mm F4.5–5.6 防手震超遠攝變焦",
+    category: "zoom",
+    focals: [100, 135, 200, 300, 400],
+    maxAperture: (f: number) => f <= 100 ? 4.5 : f <= 200 ? 5.0 : 5.6,
+    minAperture: 32,
+    filter: "77 mm",
+    weight: "1395 g",
+    tag: "超遠攝防手震變焦",
+    desc: "專業超遠攝變焦鏡頭，具備光學防手震與高速精準對焦，運動賽事與飛羽首選。",
+  },
+
+  // ── 定焦鏡頭群 (PRIME LENSES) ──
+  {
+    id: "prime_14_f18",
+    name: "14 mm F1.8 超廣角星空定焦",
+    category: "prime",
+    focals: [14],
+    maxAperture: () => 1.8,
+    minAperture: 16,
+    filter: "後置濾鏡",
+    weight: "460 g",
+    tag: "超廣角星空神器",
+    desc: "14mm 超廣角與 F1.8 大光圈，極致抑制彗形像差，星空銀河與壯闊夜景首選。",
+  },
+  {
+    id: "prime_24_f14",
+    name: "24 mm F1.4 廣角大光圈風景定焦",
+    category: "prime",
+    focals: [24],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "67 mm",
+    weight: "445 g",
+    tag: "廣角大光圈定焦",
+    desc: "輕巧緊湊的高畫質廣角定焦，F1.4 大光圈與柔美散景，風景與夜景創作利器。",
+  },
+  {
+    id: "prime_35_f14",
+    name: "35 mm F1.4 人文紀實街拍定焦",
+    category: "prime",
+    focals: [35],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "67 mm",
+    weight: "524 g",
+    tag: "人文街拍之王",
+    desc: "攝影師最喜愛的人文黃金焦段，邊角極致解像力與純淨散景，街拍紀實首選。",
+  },
+  {
+    id: "prime_50_f12",
+    name: "50 mm F1.2 頂級旗艦大光圈定焦",
+    category: "prime",
+    focals: [50],
+    maxAperture: () => 1.2,
+    minAperture: 16,
+    filter: "72 mm",
+    weight: "778 g",
+    tag: "F1.2 夢幻散景定焦",
+    desc: "頂級 F1.2 超大光圈，極淺景深營造出如奶油般融化的極致夢幻散景。",
+  },
+  {
+    id: "prime_50_f14",
+    name: "50 mm F1.4 高解像標準定焦",
+    category: "prime",
+    focals: [50],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "67 mm",
+    weight: "516 g",
+    tag: "高解像標準定焦",
+    desc: "新世代高解析 F1.4 標準鏡頭，鏡身小巧輕盈，提供飛快而安靜的精準對焦。",
+  },
+  {
+    id: "prime_85_f14_ii",
+    name: "85 mm F1.4 II 專業人像鏡皇",
+    category: "prime",
+    focals: [85],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "77 mm",
+    weight: "642 g",
+    tag: "二代人像鏡皇",
+    desc: "新一代專業人像鏡皇，畫質與散景全面進化，減重 20%，追焦反應躍升 3 倍。",
+  },
+  {
+    id: "prime_100_f28_apd",
+    name: "100 mm F2.8 APD 柔焦人像定焦",
+    category: "prime",
+    focals: [100],
+    maxAperture: () => 2.8,
+    minAperture: 20,
+    filter: "72 mm",
+    weight: "700 g",
+    tag: "APD 柔焦人像定焦",
+    desc: "搭載 APD 變跡濾鏡的特殊散景鏡頭 (T5.6 光度)，消弭二線性，呈現絲滑柔焦。",
+  },
+  {
+    id: "prime_135_f18",
+    name: "135 mm F1.8 空氣切割機人像定焦",
+    category: "prime",
+    focals: [135],
+    maxAperture: () => 1.8,
+    minAperture: 22,
+    filter: "82 mm",
+    weight: "950 g",
+    tag: "空氣切割機定焦",
+    desc: "頂級人像「空氣切割機」，強烈空間壓縮感與刀鋒般的全開光圈極致銳度。",
+  },
+  {
+    id: "prime_300_f28",
+    name: "300 mm F2.8 輕量遠攝大砲",
+    category: "prime",
+    focals: [300],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "40.5 mm 插入式",
+    weight: "1470 g",
+    tag: "最輕量遠攝大砲",
+    desc: "同級最輕 300mm F2.8 遠攝大光圈巨砲，重心優異，室內運動與生態機動首選。",
+  },
+  {
+    id: "prime_400_f28",
+    name: "400 mm F2.8 體育賽事旗艦大砲",
+    category: "prime",
+    focals: [400],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "40.5 mm 插入式",
+    weight: "2895 g",
+    tag: "體育賽事旗艦大砲",
+    desc: "體育賽事與生態攝影旗艦大砲，F2.8 超大通光量瞬間凝結高速動作。",
+  },
+  {
+    id: "prime_600_f4",
+    name: "600 mm F4.0 飛羽生態終極巨砲",
+    category: "prime",
+    focals: [600],
+    maxAperture: () => 4.0,
+    minAperture: 22,
+    filter: "40.5 mm 插入式",
+    weight: "3040 g",
+    tag: "飛羽生態終極巨砲",
+    desc: "頂級野生飛羽與航空攝影終極巨砲，超長焦距呈現羽毛與機身毫釐細節。",
+  },
 ];
 const MODES: { key: Mode; label: string; name: string }[] = [
   { key: "AUTO", label: "AUTO", name: "全自動" },
@@ -228,7 +446,8 @@ export default function Home() {
   const lens = LENSES.find(item => item.id === lensId) ?? LENSES[0];
   const shutterOptions = SHUTTERS;
   const lensMaxAperture = lens.maxAperture(focal);
-  const apertureOptions = useMemo(() => APERTURES.filter(value => value >= lensMaxAperture), [lensMaxAperture]);
+  const lensMinAperture = lens.minAperture ?? 22;
+  const apertureOptions = useMemo(() => APERTURES.filter(value => value >= lensMaxAperture && value <= lensMinAperture), [lensMaxAperture, lensMinAperture]);
   const meteringBias = meteringMode === "highlight" ? .70 : meteringMode === "spot" ? (scene.id === "night" || scene.id === "starry" || scene.id === "city_night" ? -.60 : -.15) : meteringMode === "center" ? -.10 : meteringMode === "average" ? .15 : 0;
   const usingAutoIso = mode === "AUTO" || isoAuto;
 
@@ -991,7 +1210,7 @@ export default function Home() {
           <div className="focal-scale" aria-label="焦段刻度，使用滾輪調整">
             <div className="scale-heading">
               <b>{focal} mm</b>
-              <small>視角 {horizontalFieldOfView(focal).toFixed(1)}°</small>
+              <small>{lens.category === "prime" ? "定焦鏡 · " : ""}視角 {horizontalFieldOfView(focal).toFixed(1)}°</small>
             </div>
             <div className="scale-track">
               {lens.focals.map((f, i) => {
@@ -1004,7 +1223,7 @@ export default function Home() {
                     style={{ left: `${percent}%` }}
                     onClick={() => setFocal(f)}
                   >
-                    <i />{f} mm
+                    <i />{f} mm{lens.category === "prime" ? " (定焦)" : ""}
                   </button>
                 );
               })}
@@ -1012,8 +1231,9 @@ export default function Home() {
                 aria-label="調整焦段"
                 type="range"
                 min="0"
-                max={lens.focals.length - 1}
+                max={Math.max(1, lens.focals.length - 1)}
                 step="1"
+                disabled={lens.focals.length <= 1}
                 value={Math.max(0, lens.focals.indexOf(focal))}
                 onChange={e => setFocal(lens.focals[Number(e.target.value)])}
               />
@@ -1070,12 +1290,33 @@ export default function Home() {
             <section className="lens-section">
               <div className="section-head-row">
                 <span className="section-label">相機鏡頭選擇</span>
-                <span className="lens-spec-tag">F{lensMaxAperture} 最大光圈</span>
+                <span className="lens-spec-tag">F{lensMaxAperture} 最大光圈 · {lens.category === "prime" ? "定焦" : "變焦"}</span>
               </div>
-              <select aria-label="更換鏡頭" value={lensId} onChange={e => { const l = LENSES.find(t => t.id === e.target.value) ?? LENSES[0]; setLensId(l.id); setFocal(l.focals[0]); }}>
-                {LENSES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              <select
+                aria-label="更換鏡頭"
+                value={lensId}
+                onChange={e => {
+                  const l = LENSES.find(t => t.id === e.target.value) ?? LENSES[0];
+                  setLensId(l.id);
+                  setFocal(closest(l.focals, focal));
+                }}
+              >
+                <optgroup label="── 變焦鏡頭群 (ZOOM) ──">
+                  {LENSES.filter(l => l.category === "zoom").map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="── 定焦鏡頭群 (PRIME) ──">
+                  {LENSES.filter(l => l.category === "prime").map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </optgroup>
               </select>
-              <p>當前視角：{horizontalFieldOfView(focal).toFixed(1)}° · 支援焦段 {lens.focals[0]}–{lens.focals[lens.focals.length - 1]} mm</p>
+              <div className="lens-spec-info">
+                <p><strong>當前視角</strong>：{horizontalFieldOfView(focal).toFixed(1)}° · {lens.category === "prime" ? `固定焦距 ${lens.focals[0]} mm (定焦鏡)` : `支援焦段 ${lens.focals[0]}–${lens.focals[lens.focals.length - 1]} mm (變焦鏡)`} · 光圈 F{lens.maxAperture(focal)}–F{lens.minAperture}</p>
+                <p><strong>規格資訊</strong>：濾鏡 {lens.filter} · 重量 {lens.weight} · {lens.tag}</p>
+                <p className="lens-desc-text"><strong>光學亮點</strong>：{lens.desc}</p>
+              </div>
             </section>
 
             <section className="exposure-system">
@@ -1098,12 +1339,20 @@ export default function Home() {
               </small>
             </section>
 
-            <Control label="鏡頭焦距 (變焦)" value={`${focal} mm`} helper={`視角 ${horizontalFieldOfView(focal).toFixed(1)}°`} index={Math.max(0, lens.focals.indexOf(focal))} max={lens.focals.length - 1} onChange={v => setFocal(lens.focals[v])} />
+            <Control
+              label={lens.category === "prime" ? "鏡頭焦距 (定焦)" : "鏡頭焦距 (變焦)"}
+              value={`${focal} mm`}
+              helper={`視角 ${horizontalFieldOfView(focal).toFixed(1)}°${lens.category === "prime" ? " · 固定焦距" : ""}`}
+              index={Math.max(0, lens.focals.indexOf(focal))}
+              max={Math.max(1, lens.focals.length - 1)}
+              disabled={lens.focals.length <= 1}
+              onChange={v => setFocal(lens.focals[v])}
+            />
 
             <section className="af-size-setting" aria-labelledby="af-size-label">
               <div>
-                <span className="section-label" id="af-size-label">AF 對焦框尺寸</span>
-                <small>固定在畫面正中央</small>
+                <span className="section-label" id="af-size-label">AF 對焦區域 (Spot 對焦點尺寸)</span>
+                <small>參考旗艦相機點對焦規格 (Spot S / M / L)</small>
               </div>
               <div className="af-size-options" role="group" aria-label="AF 對焦框尺寸">
                 {(["small", "medium", "large"] as AfFrameSize[]).map(size => (
@@ -1114,7 +1363,7 @@ export default function Home() {
                     aria-pressed={afFrameSize === size}
                     onClick={() => setAfFrameSize(size)}
                   >
-                    {size === "small" ? "小" : size === "medium" ? "中" : "大"}
+                    {size === "small" ? "點: S (小)" : size === "medium" ? "點: M (中)" : "點: L (大)"}
                   </button>
                 ))}
               </div>

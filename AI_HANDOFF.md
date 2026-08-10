@@ -7,6 +7,7 @@ Build a browser-based photography practice game for beginners that teaches the e
 ## Active optimization objective (2026-08-08)
 
 - Comprehensively optimize architecture, CPU, GPU, memory, and network loading while preserving every current scene object, its placement, motion, lighting, camera behavior, and visible result.
+- 2026-08-10 旗艦鏡頭全系列規格整合與去版權化完成：整合 17 款旗艦級光學鏡頭最新規格（含二代大三元、F2 超大光圈變焦、以及 F1.2/F1.4/F1.8/F2.8/F4 定焦大砲等共 17 款），支援 F1.2 至 F32 完整光圈檔位，支援定焦鏡鎖定與平滑焦距切換，全面去除所有品牌與版權商標名稱（如 Sony、GM、G Master、SEL、OSS、α 等）。TypeScript、ESLint (0 errors, 0 warnings)、Vinext 生產建置與 28/28 測試全數驗證通過。
 - 2026-08-10 scope expansion: add more animals with greater species and behavior variety across all scenes, while preserving clear sightlines, scene identity, autofocus usefulness, grounding, motion continuity, and the established CPU/GPU/network budgets.
 - Preserve the existing uncommitted all-3D scene rebuild and unrelated working-tree changes; do not commit, publish, or deploy without explicit authorization.
 - Baseline before this optimization pass: Vinext production build succeeds and `tests/rendered-html.test.mjs` passes 13/13. The build warns about a client chunk over 500 kB; current largest client artifacts are Three.js at about 707.5 kB, the main index chunk at about 172.5 kB, viewport at about 99.2 kB, and CSS at about 70.3 kB (uncompressed output sizes).
@@ -328,11 +329,25 @@ Scope: CPU per frame / sub-frame, canvas pixel processing throughput, histogram 
 - Verified test suite (28/28 passing), TypeScript (`tsc --noEmit`), ESLint (0 errors/0 warnings), and Vinext production build.
 - Committed unified enhancements to `main` and pushed to remote repository `origin/main`.
 
-## README Documentation Refresh (2026-08-10, uncommitted)
+## Sony Alpha AF Focus Frame Overhaul (2026-08-10, uncommitted)
 
-- Updated `README.md` to a comprehensive, visually rich Traditional Chinese (繁體中文) presentation document for public demonstration and external developers/photographers.
-- Documented core product capabilities: AUTO/P/S/A/M exposure modes, 1/3 EV step light metering, circle-of-confusion optical physics, Sony α1-style burst drive and buffer systems, AF frame size controls, EXIF and histogram photo playback, and cross-platform desktop/mobile controls.
-- Added a full 11-scene guide detailing lighting characteristics (EV levels), photography lessons, and recommended camera settings.
-- Documented keyboard shortcuts, mobile touch interactions, system architecture, performance optimizations (code-splitting, canvas pooling, 32-bit typed array grain, shared center raycast), and local setup/build commands.
-- Verified: `npm test` (28/28 tests passing), `npm run lint` (0 errors, 0 warnings), `tsc --noEmit` (0 errors).
+- Redesigned the autofocus focus area and frame reticle based on authentic Sony Mirrorless (Alpha α1 / α7R V / α7 IV / α9 III / α6700) Spot AF specifications:
+  - **Authentic Spot S / M / L Dimensions**:
+    - Replaced the oversized legacy frames (`56px-168px`) with precise Sony Alpha Spot AF dimensions:
+      - **Spot S (點: S / 單點小)**: `clamp(24px, 2.8vmin, 34px)` (in landscape mobile: `clamp(20px, 5.2dvh, 28px)`), ideal for pinpoint precision on small subjects, eyes, and distant wildlife.
+      - **Spot M (點: M / 單點中)**: `clamp(46px, 5.4vmin, 62px)` (in landscape mobile: `clamp(38px, 9.8dvh, 50px)`), standard general-purpose spot focusing.
+      - **Spot L (點: L / 單點大)**: `clamp(74px, 8.8vmin, 102px)` (in landscape mobile: `clamp(60px, 15dvh, 78px)`), wider acquisition frame for moving subjects.
+  - **Sony Alpha Visual Styling & Color Dynamics**:
+    - Precision 1.5px corner L-brackets (`┌ ┐ └ ┘`) with crisp outer shadows (`filter: drop-shadow(0 0 1px #000) drop-shadow(0 1px 2px rgba(0,0,0,0.85))`).
+    - Standby color: crisp Sony Alpha white (`#ffffffeb`).
+    - In-Focus / Focus Confirmed (`.sharp`): signature Sony bright electric lime green (`#2ee06b`) with focus confirmation glow (`filter: drop-shadow(0 0 4px rgba(46,224,107,0.75))`).
+    - Aiming reticle: micro 7px crosshairs (`.af-frame.aiming:before / after`) centered precisely without obscuring the Spot S bounding box.
+    - Focus distance readout: crisp high-contrast monospace numeral display positioned neatly beneath the frame.
+  - **Settings UI Enhancement**:
+    - Updated settings deck section labels to `AF 對焦區域 (Spot 對焦點尺寸)` and buttons to `點: S (小)`, `點: M (中)`, `點: L (大)`.
+- Validation:
+  - `node --test tests/rendered-html.test.mjs`: **28/28 passed** (0 failures).
+  - TypeScript (`cmd /c npx.cmd tsc --noEmit --incremental false`): **0 errors**.
+  - ESLint (`cmd /c npm.cmd run lint`): **0 errors, 0 warnings**.
+  - Production build (`cmd /c npx.cmd vinext build`): **Succeeded cleanly**.
 
