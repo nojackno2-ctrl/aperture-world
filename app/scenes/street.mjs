@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { bench, block, build3DBird, build3DCar, build3DDog, build3DHuman, build3DPerchedBird, build3DScooter, build3DSittingDog, build3DSleepingCat, contactShadow, cylinder, facadeBlock, facadeTexture, put, rand, slab, sphere, streetLamp, surface } from "../scene-kit.mjs";
+import { bench, block, build3DBird, build3DCar, build3DDog, build3DHuman, build3DPerchedBird, build3DRaccoon, build3DRat, build3DScooter, build3DSittingDog, build3DSleepingCat, contactShadow, cylinder, facadeBlock, facadeTexture, put, rand, slab, sphere, streetLamp, surface } from "../scene-kit.mjs";
 
 /** Static world for the `street` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -144,6 +144,13 @@ export function terrain(THREE, scene) {
 
   const kerbPigeon = build3DPerchedBird(THREE, "#64748b");
   put(scene, kerbPigeon, LAYER.near, [6.9, 0.28, -6.4], [0, -0.6, 0]);
+
+  const binRaccoon = build3DRaccoon(THREE, "#64748b");
+  put(scene, binRaccoon, LAYER.far, [10.6, 0.28, -24.4], [0, -0.7, 0]);
+  contactShadow(THREE, scene, 0.22).position.set(10.6, 0.29, -24.4);
+
+  const alleyRat = build3DRat(THREE, "#78716c");
+  put(scene, alleyRat, LAYER.far, [-10.8, 0.28, -8.6], [0, 0.6, 0]);
 
   return {};
 }

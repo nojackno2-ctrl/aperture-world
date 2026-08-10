@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { bench, block, build3DHuman, build3DLyingDog, build3DPerchedBird, build3DSittingDog, contactShadow, cylinder, peak, put, rand, slab, surface } from "../scene-kit.mjs";
+import { bench, block, build3DHedgehog, build3DHuman, build3DLyingDog, build3DPerchedBird, build3DRaccoon, build3DSittingDog, contactShadow, cylinder, peak, put, rand, slab, surface } from "../scene-kit.mjs";
 
 /** Static world for the `sports` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -202,6 +202,14 @@ export function terrain(THREE, scene) {
   put(scene, pigeon1, LAYER.far, [finishX - 6, 7.35, finishZ], [0, 1.5, 0]);
   const pigeon2 = build3DPerchedBird(THREE, "#475569");
   put(scene, pigeon2, LAYER.far, [finishX + 7, 7.35, finishZ], [0, -1.5, 0]);
+
+  const standRaccoon = build3DRaccoon(THREE, "#64748b");
+  put(scene, standRaccoon, LAYER.far, [-50, 0.03, TRACK_CENTRE - 27], [0, 0.7, 0]);
+  contactShadow(THREE, scene, 0.22).position.set(-50, 0.04, TRACK_CENTRE - 27);
+
+  const infieldHedgehog = build3DHedgehog(THREE, "#44403c");
+  put(scene, infieldHedgehog, LAYER.far, [31, 0.03, TRACK_CENTRE + 7.5], [0, -0.5, 0]);
+  contactShadow(THREE, scene, 0.16).position.set(31, 0.04, TRACK_CENTRE + 7.5);
   for (let spectator = 0; spectator < 6; spectator += 1) {
     const fan = build3DHuman(THREE, {
       pose: "stand", height: 1.44,

@@ -40,13 +40,25 @@ export function loadSceneModule(key) {
 }
 
 /**
- * Warms the remaining worlds once the played one is running, so switching
- * scenes stays as immediate as it was when all eleven shipped together.
+ * Warms the remaining worlds when the viewport grants background transfer.
+ * The caller supplies a cancellation check for visibility, play state, and
+ * connection policy so optional chunks never outrank the active scene.
  */
-export function prefetchOtherScenes(key) {
+export async function prefetchOtherScenes(key, shouldContinue = () => true) {
   for (const other of Object.keys(SCENE_LOADERS)) {
-    if (other !== key) void SCENE_LOADERS[other]();
+    if (other !== key) {
+      if (!shouldContinue()) return false;
+      // Keep prefetch best-effort and sequential. Starting ten imports together
+      // can crowd the active scene off a mobile radio precisely when the player
+      // has just entered the camera.
+      try {
+        await SCENE_LOADERS[other]();
+      } catch {
+        return false;
+      }
+    }
   }
+  return true;
 }
 
 /**

@@ -1,15 +1,29 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
+import * as THREE from "three";
 import { ROUTES, exposureSamples, subjectPath } from "../app/motion.mjs";
+import { build3DBat, build3DFox, build3DFrog, build3DHamster, build3DHedgehog, build3DRaccoon, build3DRat, build3DSwan } from "../app/scene-kit.mjs";
 import { BIRD_COUNT } from "../app/scene3d.mjs";
-import { horizontalFieldOfView, verticalFieldOfView } from "../app/optics.mjs";
-import { MAX_LIVE_PIXELS, TARGET_RENDER_FPS, cappedPixelRatio, nextPixelRatio, refreshTargetFps } from "../app/performance.mjs";
+import { horizontalFieldOfView, trajectoryDistance, verticalFieldOfView } from "../app/optics.mjs";
+import { CAPTURE_SAMPLE_SPACING_PX, MAX_CAPTURE_SAMPLES, MAX_LIVE_PIXELS, MIN_PHOTO_LONG_EDGE, MIN_PHOTO_SHORT_EDGE, TARGET_RENDER_FPS, cappedPixelRatio, captureSampleCount, nextPixelRatio, photoOutputSize, refreshTargetFps, shouldPrefetchScenes } from "../app/performance.mjs";
 import { LAYER, WORLD, circleOfConfusionMm, defocusBlurPixels, depthBlurPlan, viewMeterAdjustment } from "../app/world.mjs";
+import { SECURITY_HEADERS, withSecurityHeaders } from "../worker/security.mjs";
 
 const templateRoot = new URL("../", import.meta.url);
 
 const SCENE_KEYS = Object.keys(WORLD);
+
+const NEW_ANIMAL_BUILDERS = {
+  fox: build3DFox,
+  hedgehog: build3DHedgehog,
+  frog: build3DFrog,
+  swan: build3DSwan,
+  raccoon: build3DRaccoon,
+  bat: build3DBat,
+  rat: build3DRat,
+  hamster: build3DHamster,
+};
 
 /**
  * The 3D world is no longer one file: the shared modelling kit and the eleven
@@ -23,6 +37,14 @@ async function readWorldSource() {
     ...SCENE_KEYS.map(key => readFile(new URL(`../app/scenes/${key}.mjs`, import.meta.url), "utf8")),
   ]);
   return parts.join("\n");
+}
+
+async function readProductStyles() {
+  const [critical, camera] = await Promise.all([
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/camera.css", import.meta.url), "utf8"),
+  ]);
+  return `${critical}\n${camera}`;
 }
 
 /**
@@ -73,22 +95,20 @@ test("server-renders the Aperture World game", async () => {
   assert.match(html, /APERTURE/);
   assert.match(html, /WORLD/);
   assert.match(html, /山谷第一道光/);
-  assert.match(html, /鏡頭與測光/);
-  assert.match(html, /相片庫/);
-  assert.match(html, /aria-label="曝光控制"/);
-  assert.match(html, /aria-label="快門 1\//);
-  assert.match(html, /aria-label="光圈 F/);
-  assert.match(html, /aria-label="曝光值 /);
+  assert.match(html, /選擇訓練場景/);
+  assert.match(html, /進入拍攝/);
+  assert.match(html, /直接遊玩/);
+  assert.doesNotMatch(html, /class="hud"|class="mobile-console"/, "the server-rendered menu must not hydrate inactive camera controls");
   assert.doesNotMatch(html, /CAM-PRO 1|教練筆記|訓練路線|動態清晰|景深充足/);
-  assert.match(html, /ISO AUTO/);
-  assert.match(html, /測光模式/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview|react-loading-skeleton/i);
 });
 
 test("finished product renders a real 3D world, mobile controls, fullscreen, and no disposable starter preview", async () => {
-  const [page, styles, layout, packageJson, viewport, world3d] = await Promise.all([
+  const [page, photoLibrary, styles, histogramStyles, layout, packageJson, viewport, world3d] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
+    readProductStyles(),
+    readFile(new URL("../app/histogram.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
@@ -107,13 +127,13 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /\["shutter", "aperture", "exposure", "iso"\] as MobileControl\[\]/, "mobile quick controls use the same exposure-compensation-before-ISO order");
   assert.match(styles, /\.dock-readout\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*width:100%/, "desktop exposure values must spread evenly across the bottom");
   assert.match(styles, /\.dock-readout b\{[^}]*clamp\(46px,4vw,64px\)/, "desktop exposure values must use the large, glance-readable type scale");
-  assert.match(page, /className="gallery"/);
-  assert.match(page, /className="gallery-panel"/);
-  assert.match(page, /aria-modal="true"/);
-  assert.match(page, /aria-label="上一張照片"/);
-  assert.match(page, /aria-label="下一張照片"/);
-  assert.match(page, /e\.code === "ArrowLeft"/);
-  assert.match(page, /e\.code === "ArrowRight"/);
+  assert.match(photoLibrary, /className="gallery"/);
+  assert.match(photoLibrary, /className="gallery-panel"/);
+  assert.match(photoLibrary, /aria-modal="true"/);
+  assert.match(photoLibrary, /aria-label="上一張照片"/);
+  assert.match(photoLibrary, /aria-label="下一張照片"/);
+  assert.match(photoLibrary, /event\.code === "ArrowLeft"/);
+  assert.match(photoLibrary, /event\.code === "ArrowRight"/);
   assert.match(page, /className="exposure-scale"/);
   assert.match(page, /onWheelCapture=\{event => \{/);
   assert.match(page, /setActiveValue\(activeIndex \+ \(event\.deltaY > 0 \? -1 : 1\)\)/, "the mouse wheel changes the active exposure value one step at a time");
@@ -145,7 +165,7 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /disabled=\{!controlAvailability\.exposure\}/);
   assert.match(page, /disabled=\{!controlAvailability\.iso\}/);
   assert.match(styles, /\.dock-readout button:disabled\{[^}]*cursor:not-allowed[^}]*opacity:\.28/);
-  const captureBody = page.slice(page.indexOf("const capture = useCallback"), page.indexOf("const showPhoto", page.indexOf("const capture = useCallback")));
+  const captureBody = page.slice(page.indexOf("const capture = useCallback"), page.indexOf("const deletePhoto", page.indexOf("const capture = useCallback")));
   assert.doesNotMatch(captureBody, /setResult\(/, "taking a photo must not open playback");
   assert.match(captureBody, /pendingRef\.current\.push\(/, "taking a photo must enqueue it in the write-out buffer");
   assert.match(page, /if \(photo\) setShots\(prev => \[photo, \.\.\.prev\]\)/, "the write-out drain must still save queued photos to the library");
@@ -169,8 +189,8 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /await target\.requestFullscreen\(\)/, "fullscreen uses the broadly compatible argument-free API so mobile browser chrome can be removed");
   assert.doesNotMatch(page, /immersiveFallback|navigationUI/, "a failed fullscreen request must not masquerade as real fullscreen while leaving the URL bar visible");
   assert.match(page, /className="fullscreen-notice"/, "fullscreen failures are explained instead of silently falling back");
-  assert.match(page, /<Histogram image=\{viewedBlob\}/);
-  assert.match(styles, /\.playback-histogram/);
+  assert.match(photoLibrary, /<Histogram image=\{selectedPhoto\.image\}/);
+  assert.match(histogramStyles, /\.playback-histogram/);
   assert.match(styles, /\.exposure-scale\{[^}]*background:transparent[^}]*box-shadow:none/);
   assert.match(styles, /\.library-button\{[^}]*bottom:max\(/);
   assert.match(page, /className="gear-button"/);
@@ -207,18 +227,18 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(styles, /\.gallery-viewer\{[^}]*height:100%[^}]*min-height:0/, "photo review fills the library below its header");
   assert.match(styles, /\.photo-nav-previous\{[^}]*left:18px/);
   assert.match(styles, /\.photo-nav-next\{[^}]*right:18px/);
-  assert.match(page, /deletePhoto/, "photo gallery includes photo deletion support");
-  assert.match(page, /aria-label="刪除照片"/);
-  assert.match(page, /className="gallery-card-delete"/);
-  assert.match(page, /e\.code === "Delete" \|\| e\.code === "Backspace"/, "supports Delete/Backspace keyboard shortcut to delete photos");
+  assert.match(photoLibrary, /deleteSelectedPhoto/, "photo gallery includes photo deletion support");
+  assert.match(photoLibrary, /aria-label="刪除照片"/);
+  assert.match(photoLibrary, /className="gallery-card-delete"/);
+  assert.match(photoLibrary, /event\.code === "Delete" \|\| event\.code === "Backspace"/, "supports Delete/Backspace keyboard shortcut to delete photos");
   assert.match(styles, /\.gallery-card-delete/);
   // The single-photo viewer gives the image its own uncluttered column; EXIF,
   // histogram, and the frame id live in a dedicated sidebar instead of being
   // stacked on top of the photo, and the delete action isn't duplicated there.
-  assert.match(page, /className="viewer-stage"/);
-  assert.match(page, /className="viewer-sidebar"/);
-  assert.match(page, /className="viewer-frame-id"/);
-  assert.doesNotMatch(page, /className="viewer-delete-btn"/, "the viewer no longer duplicates the header's delete button");
+  assert.match(photoLibrary, /className="viewer-stage"/);
+  assert.match(photoLibrary, /className="viewer-sidebar"/);
+  assert.match(photoLibrary, /className="viewer-frame-id"/);
+  assert.doesNotMatch(photoLibrary, /className="viewer-delete-btn"/, "the viewer no longer duplicates the header's delete button");
   assert.match(styles, /\.gallery-viewer\{[^}]*grid-template-columns/, "wide screens split the viewer into a photo column and an info sidebar");
   assert.match(styles, /\.viewer-stage \.playback-photo\{[^}]*object-fit:contain/, "the photo is letterboxed, never cropped, in its own stage");
 
@@ -361,20 +381,87 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   await assert.rejects(access(new URL("../app/_sites-preview", templateRoot)));
 });
 
+test("every scene gains grounded, low-poly animal diversity", async () => {
+  for (const [species, build] of Object.entries(NEW_ANIMAL_BUILDERS)) {
+    const animal = build(THREE);
+    assert.equal(animal.userData.species, species, `${species} needs a semantic species tag`);
+    assert.ok(animal.userData.behavior, `${species} needs a recognizable behavior or pose`);
+    let meshes = 0;
+    animal.traverse(object => { if (object.isMesh) meshes += 1; });
+    assert.ok(meshes >= 4 && meshes <= 14, `${species} should stay recognizable without exceeding the low-poly mesh budget`);
+    const bounds = new THREE.Box3().setFromObject(animal);
+    assert.ok(bounds.min.y >= -0.0001, `${species} must be grounded at its local origin`);
+    const size = bounds.getSize(new THREE.Vector3());
+    assert.ok(Math.max(size.x, size.y, size.z) >= 0.2, `${species} needs a readable silhouette`);
+    animal.traverse(object => {
+      if (!object.isMesh) return;
+      object.geometry.dispose();
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach(material => material.dispose());
+    });
+  }
+
+  const expectedPlacements = {
+    landscape: ["build3DFox", "build3DHedgehog"],
+    bird: ["build3DFrog", "build3DSwan"],
+    sports: ["build3DRaccoon", "build3DHedgehog"],
+    portrait: ["build3DHamster"],
+    group: ["build3DFrog", "build3DSwan"],
+    street: ["build3DRaccoon", "build3DRat"],
+    night: ["build3DRaccoon", "build3DRat", "build3DBat"],
+    starry: ["build3DFox", "build3DBat"],
+    city_night: ["build3DFox", "build3DBat"],
+    airport: ["build3DFox", "build3DHedgehog"],
+    outdoor_portrait: ["build3DFrog", "build3DSwan", "build3DHedgehog"],
+  };
+  assert.deepEqual(Object.keys(expectedPlacements).sort(), [...SCENE_KEYS].sort(), "no playable world may be omitted from the diversity pass");
+  for (const [sceneKey, builders] of Object.entries(expectedPlacements)) {
+    const source = await readFile(new URL(`../app/scenes/${sceneKey}.mjs`, import.meta.url), "utf8");
+    for (const builder of builders) {
+      assert.match(source, new RegExp(`= ${builder}\\(THREE`), `${sceneKey} needs a placed ${builder.replace("build3D", "").toLowerCase()}`);
+    }
+    const sceneModule = await import(new URL(`../app/scenes/${sceneKey}.mjs`, import.meta.url));
+    const scene = new THREE.Scene();
+    sceneModule.terrain(THREE, scene);
+    scene.updateMatrixWorld(true);
+    const placedAnimals = [];
+    scene.traverse(object => { if (object.userData.species) placedAnimals.push(object); });
+    assert.equal(placedAnimals.length, builders.length, `${sceneKey} must construct every declared new animal`);
+    for (const animal of placedAnimals) {
+      const bounds = new THREE.Box3().setFromObject(animal);
+      assert.ok([bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z].every(Number.isFinite), `${sceneKey} ${animal.userData.species} needs finite world bounds`);
+      assert.ok(Math.hypot(animal.position.x, animal.position.z) >= 2.5, `${sceneKey} ${animal.userData.species} must stay outside the tripod's critical near sightline`);
+    }
+    scene.traverse(object => {
+      if (!object.isMesh && !object.isPoints && !object.isLineSegments) return;
+      object.geometry?.dispose();
+      const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
+      materials.forEach(material => material.dispose());
+    });
+    scene.clear();
+  }
+});
+
 test("responsive contracts cover portrait, landscape, tablet, desktop, and ultrawide viewports", async () => {
   const [page, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readProductStyles(),
   ]);
   const viewports = [
+    { name: "compact Android portrait", width: 360, height: 800, coarse: true },
     { name: "phone portrait", width: 390, height: 844, coarse: true },
+    { name: "large phone portrait", width: 412, height: 915, coarse: true },
     { name: "phone landscape", width: 844, height: 390, coarse: true },
+    { name: "short phone landscape", width: 700, height: 323, coarse: true },
     { name: "tablet portrait", width: 768, height: 1024, coarse: true },
     { name: "tablet landscape", width: 1024, height: 768, coarse: true },
-    { name: "desktop", width: 1440, height: 900, coarse: false },
-    { name: "ultrawide", width: 1920, height: 800, coarse: false },
+    { name: "large tablet 16:10", width: 1280, height: 800, coarse: true },
+    { name: "laptop 16:9", width: 1366, height: 768, coarse: false },
+    { name: "desktop 16:10", width: 1440, height: 900, coarse: false },
+    { name: "desktop QHD", width: 2560, height: 1440, coarse: false },
+    { name: "ultrawide 21:9", width: 3440, height: 1440, coarse: false },
   ];
-  assert.deepEqual(viewports.map(({ width, height }) => `${width}x${height}`), ["390x844", "844x390", "768x1024", "1024x768", "1440x900", "1920x800"]);
+  assert.deepEqual(viewports.map(({ width, height }) => `${width}x${height}`), ["360x800", "390x844", "412x915", "844x390", "700x323", "768x1024", "1024x768", "1280x800", "1366x768", "1440x900", "2560x1440", "3440x1440"]);
   for (const viewport of viewports) {
     assert.ok(viewport.width > 0 && viewport.height > 0, `${viewport.name} has a valid viewport`);
     if (viewport.coarse) assert.match(styles, /@media \(hover:none\), \(pointer:coarse\)/, `${viewport.name} uses the touch-capability layout`);
@@ -392,6 +479,122 @@ test("responsive contracts cover portrait, landscape, tablet, desktop, and ultra
   assert.match(page, /<Viewport3D[^>]*aimX=\{0\} aimY=\{0\}/, "the renderer focus probe remains centred independently of layout");
   const touchRelease = page.slice(page.indexOf("const onPointerUp"), page.indexOf("const mobileOptions"));
   assert.doesNotMatch(touchRelease, /capture\(|startBurst\(/, "touch release never fires the shutter; only dedicated shutter controls do");
+});
+
+test("commercial interaction contracts preserve keyboard focus, modal isolation, and quiet assistive updates", async () => {
+  const [page, photoLibrary, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
+    readProductStyles(),
+  ]);
+  assert.match(photoLibrary, /dialogRef/);
+  assert.match(photoLibrary, /typeof dialog\.showModal === "function"\) dialog\.showModal\(\)/, "the photo library uses the browser's real modal top layer and focus isolation");
+  assert.match(photoLibrary, /typeof dialog\.close === "function"\) dialog\.close\(\)/);
+  assert.match(photoLibrary, /else dialog\.setAttribute\("open", ""\)/, "older dialog implementations retain a usable fallback");
+  assert.match(photoLibrary, /returnFocusRef\.current\?\.focus/, "closing the library returns focus to the control that opened it");
+  assert.match(photoLibrary, /onCancel=\{event => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?if \(selectedPhoto\) setSelectedPhotoId\(null\);[\s\S]*?else onClose\(\);/, "Escape backs out of playback before closing the native modal");
+  assert.doesNotMatch(photoLibrary, /<dialog open className="gallery"/, "the gallery does not imitate modality with a permanently open non-modal dialog");
+  assert.match(styles, /:where\(button, input, select, \[role="button"\], \[role="menuitemradio"\]\):focus-visible/);
+  assert.match(styles, /\.live-stage:focus-visible\s*\{[^}]*outline:3px solid var\(--accent\)/, "the viewfinder restores a visible keyboard focus ring");
+  assert.match(styles, /\.gallery:not\(\[open\]\)\s*\{\s*display:none\s*\}/, "the modal cannot flash visibly before it enters the top layer");
+  assert.match(page, /role="timer" aria-label=\{`[^`]*Math\.ceil\(exposureState\.remainingSeconds\)/, "the exposure timer is not a high-frequency live region");
+  assert.match(page, /role="meter" aria-valuemin=\{0\} aria-valuemax=\{CARD_CAPACITY\}/);
+  assert.match(page, /role="meter" aria-valuemin=\{0\} aria-valuemax=\{MAX_BUFFER\}/);
+  assert.match(page, /aria-haspopup="menu"/);
+  assert.match(page, /role="menuitemradio"/);
+  assert.match(page, /target\.closest\('button,\[role="button"\],\[role="menuitemradio"\]'\)/, "focused controls own Space and Enter instead of also firing the global shutter");
+  assert.match(page, /event\.key !== "Enter"[\s\S]*startBurst\(\)[\s\S]*setTimeout\(stopBurst, 0\)/, "the focused viewfinder supports expected Enter activation");
+});
+
+test("notched screens and legacy mobile viewport units retain a usable launch surface", async () => {
+  const [styles, criticalStyles, cameraStyles] = await Promise.all([
+    readProductStyles(),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/camera.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(styles, /\.start-screen\s*\{[\s\S]*?padding-top:\s*max\(16px, env\(safe-area-inset-top\)\)[\s\S]*?padding-right:\s*max\(14px, env\(safe-area-inset-right\)\)[\s\S]*?padding-bottom:\s*max\(16px, env\(safe-area-inset-bottom\)\)[\s\S]*?padding-left:\s*max\(14px, env\(safe-area-inset-left\)\)/, "the launch card clears all four device cutout insets");
+  assert.match(styles, /\.start-card\s*\{[\s\S]*?max-width:\s*100%[\s\S]*?max-height:\s*calc\(100dvh - max\(16px, env\(safe-area-inset-top\)\) - max\(16px, env\(safe-area-inset-bottom\)\)\)/, "the launch card remains scrollable inside the safe dynamic viewport");
+  assert.match(criticalStyles, /@supports not \(height:100dvh\)\s*\{[\s\S]*?\.game-shell\s*\{\s*height:100vh\s*\}/, "the launch shell keeps its legacy viewport-height fallback on the critical path");
+  assert.match(cameraStyles, /@supports not \(height:100dvh\)\s*\{[\s\S]*?\.gallery\s*\{\s*height:100vh\s*\}/, "the entered gallery keeps the same legacy viewport-height fallback");
+  assert.match(styles, /@media \(hover:none\)\s*\{[\s\S]*?\.start-play:hover[\s\S]*?transform:none/, "touch devices do not retain desktop hover movement after a tap");
+  assert.match(styles, /@media \(forced-colors:active\)/, "forced-colour users retain a visible focus and AF indicator");
+});
+
+test("the production stylesheet does not ship selectors for retired interface components", async () => {
+  const [styles, ...consumers] = await Promise.all([
+    readProductStyles(),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/histogram.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+  ]);
+  const consumerSource = consumers.join("\n");
+  const generatedClassNames = new Set(["af-size-small", "af-size-medium", "af-size-large"]);
+  const cssClassNames = new Set(Array.from(styles.matchAll(/\.(-?[_a-zA-Z]+[_a-zA-Z0-9-]*)/g), match => match[1]));
+  const unreferenced = Array.from(cssClassNames)
+    .filter(className => !generatedClassNames.has(className) && !consumerSource.includes(className))
+    .sort();
+  assert.deepEqual(unreferenced, [], `unreferenced CSS class selectors: ${unreferenced.join(", ")}`);
+  assert.doesNotMatch(styles, /\.(?:mission-copy|scene-rail|scene-icon|playback-exif|photo-library|status-readout|wheel-hint)(?:\b|:)/, "retired HUD, scene rail, EXIF, and playback selectors stay out of the critical stylesheet");
+});
+
+test("camera interface CSS stays off the menu path and is ready before entry", async () => {
+  const [page, styleBoundary, criticalStyles, cameraStyles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/camera-styles.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/camera.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(styleBoundary, /import "\.\/camera\.css"/);
+  assert.match(page, /const loadCameraStyles = \(\) => import\("\.\/camera-styles"\)/);
+  assert.match(page, /function warmCameraExperience\(\) \{\s*void warmRenderer\(\);\s*return loadCameraStyles\(\);\s*\}/);
+  assert.match(page, /warmCameraExperience\(\)\.then\([\s\S]{0,100}\(\) => \{ setStarted\(true\); setLaunching\(false\); \}/, "camera markup waits for its stylesheet boundary");
+  assert.match(page, /onPointerEnter=\{\(\) => \{ void warmCameraExperience\(\); \}\}/, "pointer intent warms both CSS and renderer code");
+  assert.match(page, /disabled=\{launching\} aria-busy=\{launching\}/, "entry controls expose and lock their preparation state");
+  assert.doesNotMatch(criticalStyles, /\.hud\b|\.gallery\b|\.mobile-console\b|\.af-frame\b/, "camera-only interface selectors must not block the launch menu");
+  assert.match(cameraStyles, /\.hud\{/);
+  assert.match(cameraStyles, /\.gallery\{/);
+  assert.match(cameraStyles, /\.mobile-console\{/);
+  assert.match(cameraStyles, /\.af-frame\{/);
+
+  const cssRoot = new URL("../dist/client/_next/static/css/", import.meta.url);
+  const stylesheets = await readdir(cssRoot);
+  const emittedStyles = await Promise.all(stylesheets.map(async name => ({ name, css: await readFile(new URL(name, cssRoot), "utf8") })));
+  const criticalEntry = emittedStyles.find(entry => entry.css.includes(".start-screen"));
+  const cameraEntry = emittedStyles.find(entry => entry.css.includes(".hud{") && entry.css.includes(".gallery{"));
+  assert.ok(criticalEntry, "the launch menu emits its critical stylesheet");
+  assert.ok(cameraEntry, "the entered camera emits a separate stylesheet");
+  const [criticalArtifact, cameraArtifact, menuResponse] = await Promise.all([
+    Promise.resolve(criticalEntry.css),
+    Promise.resolve(cameraEntry.css),
+    render(),
+  ]);
+  assert.ok(Buffer.byteLength(criticalArtifact) < Buffer.byteLength(cameraArtifact), "the smaller launch surface, not the camera UI, remains render-blocking");
+  assert.doesNotMatch(await menuResponse.text(), new RegExp(cameraEntry.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "server-rendered menu HTML does not advertise the camera stylesheet");
+});
+
+test("Worker responses retain streaming bodies and receive low-risk production security headers", async () => {
+  const source = new Response("streamed body", {
+    status: 202,
+    statusText: "Accepted",
+    headers: {
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "X-Content-Type-Options": "unsafe-old-value",
+    },
+  });
+  const hardened = withSecurityHeaders(source);
+  assert.equal(hardened.status, 202);
+  assert.equal(hardened.statusText, "Accepted");
+  assert.equal(hardened.headers.get("Cache-Control"), "public, max-age=31536000, immutable", "existing cache behavior is preserved");
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) assert.equal(hardened.headers.get(name), value);
+  assert.equal(await hardened.text(), "streamed body");
+  const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+  const viteConfig = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
+  assert.match(worker, /const response = await handler\.fetch\(request, env, ctx\)/, "the application response remains awaited and stream-backed");
+  assert.match(worker, /return withSecurityHeaders\(response\)/);
+  assert.doesNotMatch(worker, /interface Env|interface ExecutionContext/, "Worker types derive from the Vinext handler instead of drifting hand-written platform types");
+  assert.match(viteConfig, /compatibility_date:\s*"2026-08-10"/, "the Worker compatibility date is explicit and current for this production pass");
 });
 
 test("fixed light sources still produce view-dependent automatic readings", () => {
@@ -441,9 +644,201 @@ test("the live renderer targets 120 FPS with a bounded adaptive GPU resolution",
   assert.match(world3d, /mergeGeometries/);
 });
 
-test("idle work, GPU resources, capture memory, network caching, and unused starter capabilities stay bounded", async () => {
-  const [page, histogram, viewport, lifecycle, threeRuntime, world3d, packageJson, packageLock, nextConfig, worker] = await Promise.all([
+test("captured photos are truly rendered at Full HD or better in every common orientation", async () => {
+  assert.equal(MIN_PHOTO_SHORT_EDGE, 1080);
+  assert.equal(MIN_PHOTO_LONG_EDGE, 1920);
+  assert.deepEqual(photoOutputSize(1920, 1080), { width: 1920, height: 1080 });
+  assert.deepEqual(photoOutputSize(1024, 768), { width: 1920, height: 1440 });
+  assert.deepEqual(photoOutputSize(390, 844), { width: 1080, height: 2338 });
+  assert.deepEqual(photoOutputSize(844, 390), { width: 2338, height: 1080 });
+  assert.deepEqual(photoOutputSize(3440, 1440), { width: 2580, height: 1080 });
+
+  for (const [inputWidth, inputHeight] of [[360, 800], [800, 360], [768, 1024], [1366, 768], [2560, 1080]]) {
+    const output = photoOutputSize(inputWidth, inputHeight);
+    assert.ok(Math.min(output.width, output.height) >= 1080, `${inputWidth}x${inputHeight} keeps a 1080 px short edge`);
+    assert.ok(Math.max(output.width, output.height) >= 1920, `${inputWidth}x${inputHeight} keeps a 1920 px long edge`);
+    assert.ok(Math.abs(output.width / output.height - inputWidth / inputHeight) < .001, `${inputWidth}x${inputHeight} keeps its composition`);
+  }
+
+  const viewport = await readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8");
+  assert.match(viewport, /const \{ width, height \} = photoOutputSize\(liveWidth, liveHeight\)/);
+  assert.match(viewport, /renderer\.setPixelRatio\(1\);\s*renderer\.setSize\(width, height, false\)/, "capture raises the real WebGL drawing buffer instead of upscaling a screenshot");
+  assert.match(viewport, /finally \{[\s\S]*renderer\.setPixelRatio\(livePixelRatio\);\s*renderer\.setSize\(liveWidth, liveHeight, false\)/, "live-view GPU cost is restored even when capture fails");
+  assert.match(viewport, /toBlob\(resolve, "image\/jpeg", 0\.92\)/, "the downloadable JPEG uses a high-quality encode");
+  assert.match(viewport, /return \{ width, height, thumb, image, \.\.\.reading \}/, "the library records the actual output resolution");
+});
+
+test("capture sampling spends work only on visible motion and preserves returning paths", async () => {
+  assert.equal(CAPTURE_SAMPLE_SPACING_PX, 2.5);
+  assert.equal(MAX_CAPTURE_SAMPLES, 64);
+  assert.equal(captureSampleCount(0), 1, "a static Full-HD frame needs one temporal render");
+  assert.equal(captureSampleCount(0.5), 1, "sub-pixel travel is not visible enough to justify another render");
+  assert.equal(captureSampleCount(0.51), 2);
+  assert.equal(captureSampleCount(5), 2);
+  assert.equal(captureSampleCount(20), 8);
+  assert.equal(captureSampleCount(160), 64);
+  assert.equal(captureSampleCount(1000), 64, "extreme long exposures retain the established safety cap");
+  assert.equal(captureSampleCount(-4), 1);
+
+  const returnPan = [{ yaw: 0, pitch: 0 }, { yaw: 2, pitch: 0 }, { yaw: 0, pitch: 0 }];
+  assert.equal(trajectoryDistance(returnPan), 4, "out-and-back camera movement cannot disappear because its endpoints match");
+  assert.equal(trajectoryDistance([{ yaw: 1, pitch: 2 }]), 0);
+
+  const [viewport, page] = await Promise.all([
+    readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(viewport, /const MOTION_PROBE_SEGMENTS = 8/);
+  assert.match(viewport, /for \(let probe = 0; probe <= MOTION_PROBE_SEGMENTS; probe \+= 1\)/, "each subject's projected exposure path is measured through intermediate positions");
+  assert.match(viewport, /subjectMotionPx = Math\.max\(subjectMotionPx, pathPixels\)/, "the fastest visible subject protects all scene motion");
+  assert.match(viewport, /const cameraMotionAngle = trajectoryDistance\(trajectory\)/, "camera sampling measures the complete recorded pan");
+  assert.match(viewport, /const motionPixels = subjectMotionPx \+ request\.shakePx \* 2 \+ cameraMotionPx \* 0\.75/);
+  assert.match(viewport, /const samples = captureSampleCount\(motionPixels\)/);
+  assert.doesNotMatch(viewport, /Math\.max\(8, Math\.min\(64/, "static and frozen burst frames must not pay the old eight-sample floor");
+  assert.match(page, /const motionSpread = trajectoryDistance\(trajectory\)/, "capture coaching scores the same complete camera path");
+
+  assert.equal(8 * 4, 32, "the old static floor performed eight depth-plus-three-layer passes");
+  assert.equal(captureSampleCount(0) * 4, 4, "the adaptive static path performs one depth-plus-three-layer pass");
+});
+
+test("players can download the original captured JPEG without recompression", async () => {
+  const [photoLibrary, styles] = await Promise.all([
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
+    readProductStyles(),
+  ]);
+  assert.match(photoLibrary, /URL\.createObjectURL\(photo\.image\)/, "download points directly at the stored full-resolution Blob");
+  assert.match(photoLibrary, /link\.download = `aperture-world-\$\{photo\.scene\}[^`]+\.jpg`/);
+  assert.match(photoLibrary, /document\.body\.appendChild\(link\);\s*link\.click\(\);\s*link\.remove\(\)/);
+  assert.match(photoLibrary, /URL\.revokeObjectURL\(url\)/, "the short-lived download URL is released");
+  assert.match(photoLibrary, /className="gallery-action-download"/, "single-photo playback offers download");
+  assert.match(photoLibrary, /className="gallery-card-download"/, "each gallery card offers download");
+  assert.match(photoLibrary, /\{selectedPhoto\.width\} × \{selectedPhoto\.height\} JPEG/, "playback reports the actual file dimensions");
+  assert.match(styles, /\.gallery-card-download/);
+});
+
+test("background scene warming respects data-saving and slow mobile connections", async () => {
+  assert.equal(shouldPrefetchScenes(undefined), true);
+  assert.equal(shouldPrefetchScenes({ saveData: false, effectiveType: "4g" }), true);
+  assert.equal(shouldPrefetchScenes({ saveData: true, effectiveType: "4g" }), false);
+  assert.equal(shouldPrefetchScenes({ saveData: false, effectiveType: "slow-2g" }), false);
+  assert.equal(shouldPrefetchScenes({ saveData: false, effectiveType: "2g" }), false);
+
+  const viewport = await readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const sceneLoader = await readFile(new URL("../app/scene3d.mjs", import.meta.url), "utf8");
+  assert.match(page, /let rendererWarmPromise: Promise<unknown> \| null = null/, "renderer intent warming is deduped across hover, focus, pointer-down, and activation");
+  assert.match(page, /function warmRenderer\(\)[\s\S]*import\("\.\/three-runtime"\)[\s\S]*import\("three\/addons\/utils\/BufferGeometryUtils\.js"\)/, "interaction intent warms both renderer dependencies");
+  assert.doesNotMatch(page, /if \(typeof window !== "undefined"\)\s*\{[\s\S]{0,220}import\("\.\/three-runtime"\)/, "hydration alone must not download the 3D renderer");
+  assert.match(page, /\{started\s*\? <Viewport3D[\s\S]{0,360}: <div className="viewport-stage" aria-hidden="true" \/>\}/, "the 3D viewport does not mount behind the start screen");
+  assert.match(page, /\{started && <div className="hud">/, "the full camera HUD is created only after entry");
+  assert.match(page, /\{started && <section className="mobile-console"/, "the mobile camera console is created only after entry");
+  assert.match(page, /className="start-actions" onPointerEnter=\{\(\) => \{ void warmCameraExperience\(\); \}\}/, "mouse intent can overlap camera CSS and renderer transfer with activation");
+  assert.match(page, /onPointerDown=\{\(\) => \{ void warmCameraExperience\(\); \}\}/, "touch intent can overlap camera preparation with activation");
+  assert.match(page, /onFocus=\{\(\) => \{ void warmCameraExperience\(\); \}\}/, "keyboard intent can overlap camera preparation with activation");
+  assert.match(page, /const enterGame[\s\S]{0,220}warmCameraExperience\(\)\.then\([\s\S]{0,100}setStarted\(true\)/, "activation waits for camera styling before mounting the viewport");
+  assert.match(viewport, /viewRef\.current\.frozen \|\| document\.hidden \|\| !shouldPrefetchScenes\(connection\)/, "the start screen, hidden tabs, and constrained links must not warm unused worlds");
+  assert.match(viewport, /requestIdleCallback\(warm, \{ timeout: 2500 \}\)/, "scene warming waits for an idle main-thread slot");
+  assert.match(viewport, /prefetchOtherScenes\(engine\.sceneKey, canContinue\)/, "warming stops between chunks if the player returns home or the tab becomes hidden");
+  assert.match(sceneLoader, /await SCENE_LOADERS\[other\]\(\)/, "the remaining scene chunks download sequentially");
+  assert.doesNotMatch(viewport, /setTimeout\(\(\) => prefetchOtherScenes/, "mounting the preview must not immediately download all worlds");
+  const menuHtml = await (await render()).text();
+  assert.doesNotMatch(menuHtml, /\/(?:viewport|three\.module|scene-kit|performance)-[^"']+\.js/, "the server-rendered menu must not preload camera-only renderer or performance chunks");
+});
+
+test("photo histogram code stays off the initial page path until playback", async () => {
+  const [page, photoLibrary, histogramSource, criticalStyles, cameraStyles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/histogram.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/camera.css", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(page, /import \{ Histogram \} from "\.\/histogram"/, "the playback analyzer must not be a static page dependency");
+  assert.doesNotMatch(page, /loadHistogram|shadowPercent|getImageData/, "the menu and camera page do not own playback analysis code");
+  assert.match(photoLibrary, /const loadHistogram = \(\) => import\("\.\/histogram"\)/, "histogram loading has an explicit nested demand boundary");
+  assert.match(photoLibrary, /const Histogram = dynamic\(\(\) => loadHistogram\(\)\.then\(module => module\.Histogram\)/, "the analyzer component is demand-loaded");
+  assert.match(photoLibrary, /const showPhoto[\s\S]{0,120}void loadHistogram\(\);[\s\S]{0,120}setSelectedPhotoId\(/, "selecting a photo begins transfer before the playback render");
+  assert.match(photoLibrary, /className="playback-histogram histogram-loading" aria-hidden="true"/, "playback reserves stable layout while the analyzer arrives");
+  assert.match(cameraStyles, /\.histogram-loading\{min-height:164px\}/);
+  assert.doesNotMatch(criticalStyles, /\.histogram-loading|\.playback-histogram/, "playback-only layout and graph styling must not remain in the critical stylesheet");
+  assert.doesNotMatch(cameraStyles, /\.playback-histogram\{/, "the analyzer's own graph styling stays in its smaller playback chunk");
+  assert.match(histogramSource, /import "\.\/histogram\.css"/, "the analyzer owns its demand-loaded styles");
+
+  const chunkRoot = new URL("../dist/client/_next/static/chunks/", import.meta.url);
+  const cssRoot = new URL("../dist/client/_next/static/css/", import.meta.url);
+  const [chunks, stylesheets] = await Promise.all([readdir(chunkRoot), readdir(cssRoot)]);
+  const pageChunkName = chunks.find(name => /^page-.*\.js$/.test(name));
+  const histogramChunkName = chunks.find(name => /^histogram-.*\.js$/.test(name));
+  const histogramCssName = stylesheets.find(name => /^histogram\..*\.css$/.test(name));
+  assert.ok(pageChunkName, "the production page chunk must exist");
+  assert.ok(histogramChunkName, "the production histogram must emit as its own chunk");
+  assert.ok(histogramCssName, "the production histogram styles must emit as their own chunk");
+  const [pageChunk, histogramChunk, histogramCss, menuResponse] = await Promise.all([
+    readFile(new URL(pageChunkName, chunkRoot), "utf8"),
+    readFile(new URL(histogramChunkName, chunkRoot), "utf8"),
+    readFile(new URL(histogramCssName, cssRoot), "utf8"),
+    render(),
+  ]);
+  assert.doesNotMatch(pageChunk, /shadowPercent|getImageData\(0,0,/, "histogram sampling code must not remain in the initial page chunk");
+  assert.match(histogramChunk, /shadowPercent/);
+  assert.match(histogramChunk, /getImageData\(0,0,/);
+  assert.match(histogramCss, /\.playback-histogram/);
+  assert.doesNotMatch(await menuResponse.text(), /histogram\.[^"']+\.css/, "the menu must not advertise playback-only CSS");
+});
+
+test("large photo libraries render incrementally without limiting storage or playback", async () => {
+  const [page, photoLibrary, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
+    readProductStyles(),
+  ]);
+  assert.match(page, /const CARD_CAPACITY = 2000/);
+  assert.match(photoLibrary, /const GALLERY_BATCH_SIZE = 48/);
+  assert.match(photoLibrary, /const \[galleryLimit, setGalleryLimit\] = useState\(GALLERY_BATCH_SIZE\)/);
+  assert.match(photoLibrary, /shots\.slice\(0, galleryLimit\)/, "only the current gallery window receives card DOM");
+  assert.match(photoLibrary, /visibleShots\.map\(\(photo, index\) =>/, "the grid renders the bounded window");
+  assert.doesNotMatch(photoLibrary, /className="gallery-grid"[^>]*>\{shots\.map/, "the grid must not render all 2,000 stored photos at once");
+  assert.match(page, /libraryOpen && <PhotoLibrary/, "closing and reopening remounts the library with its first 48-card batch");
+  assert.equal((page.match(/setLibraryOpen\(true\)/g) ?? []).length, 1, "all keyboard, desktop, and mobile entry paths share the bounded open routine");
+  assert.match(photoLibrary, /Math\.min\(shots\.length, current \+ GALLERY_BATCH_SIZE\)/, "load-more cannot exceed the stored collection");
+  assert.match(photoLibrary, /disabled=\{visibleShots\.length >= shots\.length\}/, "the final load control stays focus-stable and becomes disabled");
+  assert.match(photoLibrary, /const nextIndex = \(Math\.max\(0, currentIndex\) \+ offset \+ shots\.length\) % shots\.length/, "playback arrows continue to navigate the complete collection");
+  assert.match(styles, /\.gallery-card\{content-visibility:auto;contain-intrinsic-size:auto 240px\}/, "visible cards also skip offscreen paint and layout work");
+  assert.match(styles, /\.gallery-grid>\.gallery-load-more\{[^}]*min-height:52px/, "the incremental control remains touch-friendly");
+
+  let limit = 48;
+  while (limit < 2000) limit = Math.min(2000, limit + 48);
+  assert.equal(limit, 2000, "incremental batches eventually expose every card without truncation");
+});
+
+test("the photo library stays off the menu and camera chunks until the player opens it", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /const loadPhotoLibrary = \(\) => import\("\.\/photo-library"\)/, "the library has an explicit demand boundary");
+  assert.match(page, /const PhotoLibrary = dynamic\(\(\) => loadPhotoLibrary\(\)\.then\(module => module\.PhotoLibrary\)/, "the complete modal is a dynamic component");
+  assert.match(page, /onPointerEnter=\{\(\) => void loadPhotoLibrary\(\)\}[\s\S]{0,180}onFocus=\{\(\) => void loadPhotoLibrary\(\)\}/, "desktop and mobile library controls warm the feature on intent");
+  assert.doesNotMatch(page, /gallery-load-more|aperture-world-\$\{photo\.scene\}|URL\.createObjectURL\(blob\)/, "gallery rendering, download, and Blob viewer code must not remain in the page source");
+
+  const chunkRoot = new URL("../dist/client/_next/static/chunks/", import.meta.url);
+  const chunkNames = (await readdir(chunkRoot)).filter(name => name.endsWith(".js"));
+  const artifacts = await Promise.all(chunkNames.map(async name => ({ name, source: await readFile(new URL(name, chunkRoot), "utf8") })));
+  const pageArtifact = artifacts.find(artifact => /^page-.*\.js$/.test(artifact.name));
+  const libraryArtifact = artifacts.find(artifact => artifact.source.includes("gallery-load-more") && artifact.source.includes("aperture-world-"));
+  assert.ok(pageArtifact, "the production page chunk must exist");
+  assert.ok(libraryArtifact, "the production photo library must emit as its own chunk");
+  assert.notEqual(libraryArtifact.name, pageArtifact.name, "the dormant library cannot be folded back into the initial page chunk");
+  assert.doesNotMatch(pageArtifact.source, /gallery-load-more|aperture-world-|createObjectURL\(/, "the initial page chunk must not contain library-only DOM, downloads, or Blob URLs");
+  assert.match(libraryArtifact.source, /gallery-load-more/);
+  assert.match(libraryArtifact.source, /aperture-world-/);
+
+  const menuHtml = await (await render()).text();
+  assert.doesNotMatch(menuHtml, new RegExp(libraryArtifact.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the server-rendered menu must not advertise the dormant library chunk");
+  assert.doesNotMatch(menuHtml, /gallery-loading|PHOTO LIBRARY|class="gallery"/, "the menu must not render library UI or its loading fallback");
+});
+
+test("idle work, GPU resources, capture memory, network caching, and unused starter capabilities stay bounded", async () => {
+  const [page, photoLibrary, histogram, viewport, lifecycle, threeRuntime, world3d, packageJson, packageLock, nextConfig, worker] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/histogram.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/viewport.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/three-lifecycle.ts", import.meta.url), "utf8"),
@@ -458,13 +853,13 @@ test("idle work, GPU resources, capture memory, network caching, and unused star
   assert.match(page, /const CARD_CAPACITY = 2000/);
   assert.match(page, /reservedFramesRef\.current >= CARD_CAPACITY/, "the card must reserve asynchronous encodes before accepting another frame");
   assert.match(page, /bufferDecayRef\.current >= MAX_BUFFER/, "encoding and queued frames must both count against the 300-frame buffer");
-  assert.match(page, /image: Blob;/, "captured photos own their pixel data as a Blob, not a long-lived object URL");
-  assert.match(page, /URL\.createObjectURL\(blob\)/, "the viewer mints an object URL from only the shown photo's Blob");
-  assert.match(page, /return \(\) => URL\.revokeObjectURL\(url\)/, "the viewer's object URL is revoked with its committed image element");
+  assert.match(photoLibrary, /image: Blob;/, "captured photos own their pixel data as a Blob, not a long-lived object URL");
+  assert.match(photoLibrary, /URL\.createObjectURL\(blob\)/, "the viewer mints an object URL from only the shown photo's Blob");
+  assert.match(photoLibrary, /return \(\) => URL\.revokeObjectURL\(url\)/, "the viewer's object URL is revoked with its committed image element");
   assert.match(histogram, /image instanceof Blob \? URL\.createObjectURL\(image\) : null/, "histogram analysis also accepts the selected Blob without retaining card-wide URLs");
   assert.match(histogram, /URL\.revokeObjectURL\(objectUrl\)/, "the histogram releases its temporary analysis URL");
-  assert.match(page, /loading="lazy" decoding="async"/, "the gallery grid must not decode every frame at once");
-  assert.match(page, /frozen=\{!started \|\| Boolean\(result\) \|\| libraryOpen\}/);
+  assert.match(photoLibrary, /loading="lazy" decoding="async"/, "the gallery grid must not decode every frame at once");
+  assert.match(page, /frozen=\{libraryOpen\}/, "only a mounted, entered viewport needs modal freezing");
   assert.doesNotMatch(page, /window\.setInterval/, "an empty buffer must not keep a permanent interval alive");
   assert.match(page, /if \(pendingRef\.current\.length > 0\) bufferTimerRef\.current = window\.setTimeout\(drain, BUFFER_WRITE_MS\)/, "ready frames must continue draining without queue-driven timer resets");
   assert.match(viewport, /if \(!viewRef\.current\.frozen\) scheduleFrame\(\)/, "a frozen view must stop requesting frames");
@@ -487,14 +882,22 @@ test("idle work, GPU resources, capture memory, network caching, and unused star
   assert.match(viewport, /Math\.round\(light\.ev \/ METER_STEP_EV\) \* METER_STEP_EV/, "meter readings are quantised to third-stops");
   assert.match(viewport, /lightRef\.current\?\.\(\{ ev: meteredEv \}\)/, "React receives the quantised meter value");
   assert.doesNotMatch(viewport, /Math\.abs\(light\.ev - lastLightEv\)/, "raw EV changes must not trigger meter reports");
-  // A session downloads the world it plays; the other ten arrive in the background.
+  // A session downloads the world it plays. Remaining worlds warm only after
+  // entry, at idle, and when the current connection permits optional transfer.
   assert.match(viewport, /await loadSceneModule\(firstKey\)/, "the played scenario is fetched as its own chunk");
   assert.match(viewport, /if \(disposed \|\| engine\.sceneKey !== key\) return/, "a superseded scene load must not mount over a newer one");
-  assert.match(viewport, /setTimeout\(\(\) => prefetchOtherScenes\(firstKey\), 1200\)/, "switching scenes stays immediate");
+  assert.match(viewport, /engine\.warmScenes\(\)/, "capable connections can warm scene switching after entry");
+  assert.match(viewport, /prefetchOtherScenes\(engine\.sceneKey, canContinue\)/, "scene warming remains cancellable between chunks");
+  assert.match(viewport, /window\.cancelIdleCallback\(warmIdleId\)/, "teardown cancels an idle warm-up slot");
   assert.match(viewport, /window\.clearTimeout\(warmTimer\)/, "teardown cancels the background warm-up");
-  // Renders that cannot change a pixel: a look held against its limit, and a
-  // meter reading that comes back at the same stop.
-  assert.equal((page.match(/prev\.yaw === nextLook\.yaw && prev\.pitch === nextLook\.pitch \? prev : nextLook/g) ?? []).length, 2, "both look paths bail out when the clamp returns the same angles");
+  // Live look is renderer state. Pointer movement must not reconcile the whole
+  // Home/HUD tree at display refresh rate.
+  assert.doesNotMatch(page, /\[look, setLook\]/, "camera movement must not live in React state");
+  assert.match(page, /const lookRef = useRef<Look>\(\{ yaw: 0, pitch: 0 \}\)/, "capture and gestures share one current camera look");
+  assert.match(page, /viewportRef\.current\?\.setLook\(nextLook\)/, "look changes go straight to the viewport engine");
+  assert.match(viewport, /setLook\(nextLook\) \{[\s\S]*view\.yaw = nextLook\.yaw;[\s\S]*view\.pitch = nextLook\.pitch;[\s\S]*engineRef\.current\?\.wake\(\)/, "the imperative look path mutates only renderer state and wakes one frame");
+  assert.doesNotMatch(page, /<Viewport3D[^>]*\byaw=/, "parent renders must not push stale yaw back into the live renderer");
+  // A meter reading that comes back at the same stop also remains a React bail-out.
   assert.match(page, /const \[lightEv, setLightEv\] = useState\(0\)/, "the meter is a bare number so an unchanged stop bails out");
   assert.doesNotMatch(page, /setLightRead\(\{/, "a fresh reading object would defeat that bail-out");
   assert.match(viewport, /import\("\.\/three-runtime"\)/, "the viewport must load the curated renderer boundary");
