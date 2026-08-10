@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { block, boulder, build3DBird, build3DBunny, build3DModelPose, build3DPerchedBird, build3DSittingDog, build3DSleepingCat, build3DTurtle, contactShadow, cylinder, flowerPatch, hedge, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
+import { block, boulder, build3DBird, build3DBunny, build3DFrog, build3DHedgehog, build3DModelPose, build3DPerchedBird, build3DSittingDog, build3DSleepingCat, build3DSwan, build3DTurtle, contactShadow, cylinder, flowerPatch, hedge, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
 
 /** Static world for the `outdoor_portrait` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -143,6 +143,16 @@ export function terrain(THREE, scene) {
   const gardenBunny = build3DBunny(THREE, "#ffffff");
   put(scene, gardenBunny, LAYER.near, [-1.8, 0.04, -2.6], [0, 0.6, 0]);
   contactShadow(THREE, scene, 0.24, 0.24, LAYER.near).position.set(-1.8, 0.05, -2.6);
+
+  const pondFrog = build3DFrog(THREE, "#65a30d");
+  put(scene, pondFrog, LAYER.far, [3.35, 0.32, -11.8], [0, -0.5, 0]);
+
+  const koiSwan = build3DSwan(THREE, "#f8fafc");
+  put(scene, koiSwan, LAYER.far, [4.35, 0.28, -12.9], [0, 0.55, 0]);
+
+  const borderHedgehog = build3DHedgehog(THREE, "#57534e");
+  put(scene, borderHedgehog, LAYER.far, [-6.2, 0.03, -8.4], [0, 0.7, 0]);
+  contactShadow(THREE, scene, 0.16).position.set(-6.2, 0.04, -8.4);
 
   return {};
 }

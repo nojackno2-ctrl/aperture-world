@@ -975,3 +975,192 @@ export function build3DSquirrel(THREE, color = "#c2410c") {
   group.traverse(o => { if (o.isMesh) o.layers.set(LAYER.far); });
   return group;
 }
+
+function finishAnimal(group, species, behavior, layer = LAYER.far) {
+  group.name = `animal:${species}`;
+  group.userData.species = species;
+  group.userData.behavior = behavior;
+  group.traverse(object => { if (object.isMesh) object.layers.set(layer); });
+  return group;
+}
+
+/** Alert fox with a white chest, pointed ears, and a long tipped brush. */
+export function build3DFox(THREE, color = "#ea580c", layer = LAYER.far) {
+  const group = new THREE.Group();
+  const fur = surface(THREE, color), dark = surface(THREE, "#3f2a1d"), white = surface(THREE, "#f8fafc");
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 6), fur);
+  body.scale.set(0.85, 0.7, 1.35); body.position.set(0, 0.29, -0.04);
+  const chest = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.34, 6), white);
+  chest.position.set(0, 0.35, 0.2); chest.rotation.x = -0.28;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), fur);
+  head.position.set(0, 0.57, 0.24);
+  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.25, 6), white);
+  snout.position.set(0, 0.53, 0.43); snout.rotation.x = Math.PI / 2;
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), dark);
+  nose.position.set(0, 0.53, 0.56);
+  for (const x of [-0.09, 0.09]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.18, 5), dark);
+    ear.position.set(x, 0.76, 0.22); group.add(ear);
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.3, 5), fur);
+    leg.position.set(x * 0.72, 0.15, 0.18); group.add(leg);
+  }
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.055, 0.64, 7), fur);
+  tail.position.set(0.08, 0.29, -0.38); tail.rotation.x = -1.05; tail.rotation.z = -0.18;
+  const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 5), white);
+  tailTip.position.set(0.12, 0.12, -0.68);
+  group.add(body, chest, head, snout, nose, tail, tailTip);
+  return finishAnimal(group, "fox", "alert-sit", layer);
+}
+
+/** Low foraging hedgehog; the faceted shell reads as quills without dense geometry. */
+export function build3DHedgehog(THREE, color = "#57534e", layer = LAYER.far) {
+  const group = new THREE.Group();
+  const quills = surface(THREE, color), faceMat = surface(THREE, "#a16207"), dark = surface(THREE, "#1c1917");
+  const shell = new THREE.Mesh(new THREE.DodecahedronGeometry(0.25), quills);
+  shell.scale.set(1, 0.72, 1.3); shell.position.set(0, 0.2, -0.05);
+  const face = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.28, 6), faceMat);
+  face.position.set(0, 0.15, 0.28); face.rotation.x = Math.PI / 2;
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), dark);
+  nose.position.set(0, 0.15, 0.43);
+  for (const x of [-0.08, 0.08]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 5, 4), dark);
+    eye.position.set(x, 0.22, 0.3); group.add(eye);
+  }
+  group.add(shell, face, nose);
+  return finishAnimal(group, "hedgehog", "foraging", layer);
+}
+
+/** Crouched pond frog with raised eyes and broad swimming feet. */
+export function build3DFrog(THREE, color = "#4d7c0f", layer = LAYER.far) {
+  const group = new THREE.Group();
+  const skin = surface(THREE, color), eyeMat = surface(THREE, "#facc15"), pupilMat = surface(THREE, "#172554");
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), skin);
+  body.scale.set(1.2, 0.55, 1); body.position.set(0, 0.09, -0.02);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), skin);
+  head.scale.set(1.18, 0.65, 0.9); head.position.set(0, 0.17, 0.12);
+  for (const x of [-0.085, 0.085]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 5), eyeMat);
+    eye.position.set(x, 0.26, 0.15);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.018, 5, 4), pupilMat);
+    pupil.position.set(x, 0.27, 0.19);
+    const leg = new THREE.Mesh(new THREE.SphereGeometry(0.1, 7, 5), skin);
+    leg.scale.set(1.35, 0.34, 0.78); leg.position.set(x * 1.8, 0.055, -0.06);
+    group.add(eye, pupil, leg);
+  }
+  group.add(body, head);
+  return finishAnimal(group, "frog", "crouching", layer);
+}
+
+/** Floating swan with folded wings and an upright curved-neck silhouette. */
+export function build3DSwan(THREE, color = "#f8fafc", layer = LAYER.far) {
+  const group = new THREE.Group();
+  const feather = surface(THREE, color), beakMat = surface(THREE, "#f97316"), dark = surface(THREE, "#111827");
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.28, 9, 7), feather);
+  body.scale.set(0.9, 0.55, 1.5); body.position.set(0, 0.16, -0.02);
+  for (const x of [-0.17, 0.17]) {
+    const wing = new THREE.Mesh(new THREE.SphereGeometry(0.18, 7, 5), feather);
+    wing.scale.set(0.55, 0.3, 1.25); wing.position.set(x, 0.24, -0.05); group.add(wing);
+  }
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.075, 0.5, 7), feather);
+  neck.position.set(0, 0.45, 0.24); neck.rotation.x = -0.18;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 6), feather);
+  head.position.set(0, 0.7, 0.29);
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.18, 5), beakMat);
+  beak.position.set(0, 0.68, 0.42); beak.rotation.x = Math.PI / 2;
+  const mask = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, 0.03), dark);
+  mask.position.set(0, 0.7, 0.37);
+  group.add(body, neck, head, beak, mask);
+  return finishAnimal(group, "swan", "floating", layer);
+}
+
+/** Urban raccoon rummaging on its haunches, with face mask and ringed tail. */
+export function build3DRaccoon(THREE, color = "#64748b", layer = LAYER.far) {
+  const group = new THREE.Group();
+  const fur = surface(THREE, color), dark = surface(THREE, "#1f2937"), light = surface(THREE, "#cbd5e1");
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), fur);
+  body.scale.set(0.85, 1.15, 0.9); body.position.set(0, 0.28, 0);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), light);
+  head.position.set(0, 0.52, 0.12);
+  const mask = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.075, 0.045), dark);
+  mask.position.set(0, 0.54, 0.245);
+  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), dark);
+  snout.scale.set(0.75, 0.6, 1); snout.position.set(0, 0.47, 0.28);
+  for (const x of [-0.09, 0.09]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.12, 5), dark);
+    ear.position.set(x, 0.68, 0.08);
+    const paw = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.24, 5), dark);
+    paw.position.set(x * 0.7, 0.18, 0.14); group.add(ear, paw);
+  }
+  const tail = new THREE.Group();
+  for (let segment = 0; segment < 5; segment += 1) {
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.075 - segment * 0.009, 0.085 - segment * 0.009, 0.13, 7), segment % 2 ? light : dark);
+    ring.position.y = segment * 0.12; tail.add(ring);
+  }
+  tail.position.set(0.08, 0.11, -0.22); tail.rotation.x = -1.05; tail.rotation.z = -0.18;
+  group.add(body, head, mask, snout, tail);
+  return finishAnimal(group, "raccoon", "rummaging", layer);
+}
+
+/** Small bat with a real two-triangle wing silhouette instead of a bird recolour. */
+export function build3DBat(THREE, color = "#312e81", layer = LAYER.far) {
+  const group = new THREE.Group();
+  const fur = surface(THREE, color), wingMat = surface(THREE, color, { side: THREE.DoubleSide });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.1, 7, 5), fur);
+  body.scale.set(0.72, 1.3, 0.8); body.position.set(0, 0.22, 0);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 5), fur);
+  head.position.set(0, 0.36, 0.02);
+  for (const x of [-0.045, 0.045]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.09, 4), fur);
+    ear.position.set(x, 0.46, 0.02); group.add(ear);
+  }
+  for (const side of [-1, 1]) {
+    const wingGeometry = new THREE.BufferGeometry();
+    wingGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array([
+      0, 0.34, 0,
+      side * 0.48, 0.27, 0,
+      side * 0.35, 0.02, 0,
+      side * 0.13, 0.14, 0,
+    ]), 3));
+    wingGeometry.setIndex([0, 1, 2, 0, 2, 3]);
+    wingGeometry.computeVertexNormals();
+    group.add(new THREE.Mesh(wingGeometry, wingMat));
+  }
+  group.add(body, head);
+  return finishAnimal(group, "bat", "gliding", layer);
+}
+
+function build3DSmallRodent(THREE, { color, species, tail, layer }) {
+  const group = new THREE.Group();
+  const fur = surface(THREE, color), pale = surface(THREE, "#f5d0a9"), dark = surface(THREE, "#1c1917");
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), fur);
+  body.scale.set(0.9, 0.8, 1.25); body.position.set(0, 0.1, 0);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 7, 5), fur);
+  head.position.set(0, 0.15, 0.13);
+  for (const x of [-0.065, 0.065]) {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), pale);
+    ear.scale.set(1, 0.45, 1); ear.position.set(x, 0.23, 0.1);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.012, 5, 4), dark);
+    eye.position.set(x * 0.7, 0.18, 0.205); group.add(ear, eye);
+  }
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.018, 5, 4), dark);
+  nose.position.set(0, 0.14, 0.23);
+  group.add(body, head, nose);
+  if (tail) {
+    const tailMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.42, 5), pale);
+    tailMesh.position.set(0.03, 0.095, -0.22); tailMesh.rotation.x = -1.18; tailMesh.rotation.z = -0.35; group.add(tailMesh);
+  } else {
+    for (const x of [-0.075, 0.075]) {
+      const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 4), pale);
+      cheek.position.set(x, 0.12, 0.18); group.add(cheek);
+    }
+  }
+  return finishAnimal(group, species, tail ? "scurrying" : "snacking", layer);
+}
+
+export function build3DRat(THREE, color = "#78716c", layer = LAYER.far) {
+  return build3DSmallRodent(THREE, { color, species: "rat", tail: true, layer });
+}
+
+export function build3DHamster(THREE, color = "#d97706", layer = LAYER.far) {
+  return build3DSmallRodent(THREE, { color, species: "hamster", tail: false, layer });
+}

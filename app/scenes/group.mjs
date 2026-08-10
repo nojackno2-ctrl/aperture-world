@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { bench, block, build3DHuman, build3DPerchedBird, build3DSittingCat, build3DSittingDog, contactShadow, cylinder, flowerPatch, hedge, peak, put, rand, slab, sphere, tree } from "../scene-kit.mjs";
+import { bench, block, build3DFrog, build3DHuman, build3DPerchedBird, build3DSittingCat, build3DSittingDog, build3DSwan, contactShadow, cylinder, flowerPatch, hedge, peak, put, rand, slab, sphere, tree } from "../scene-kit.mjs";
 
 /** Static world for the `group` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -106,6 +106,12 @@ export function terrain(THREE, scene) {
 
   const flowerbedCat = build3DSittingCat(THREE, "#334155");
   put(scene, flowerbedCat, LAYER.near, [2.6, 0.03, -4.0], [0, -0.5, 0]);
+
+  const fountainFrog = build3DFrog(THREE, "#4d7c0f");
+  put(scene, fountainFrog, LAYER.far, [2.55, 0.7, -17.3], [0, -0.4, 0]);
+
+  const fountainSwan = build3DSwan(THREE, "#f8fafc");
+  put(scene, fountainSwan, LAYER.far, [-1.35, 0.58, -17.2], [0, 0.8, 0]);
 
   return {};
 }
