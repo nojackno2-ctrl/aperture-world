@@ -327,3 +327,12 @@ Scope: CPU per frame / sub-frame, canvas pixel processing throughput, histogram 
 - Deleted merged and stale remote branch `claude/portrait-home-screen-issue-fsaw6q` from GitHub repository.
 - Verified test suite (28/28 passing), TypeScript (`tsc --noEmit`), ESLint (0 errors/0 warnings), and Vinext production build.
 - Committed unified enhancements to `main` and pushed to remote repository `origin/main`.
+
+## README Documentation Refresh (2026-08-10, uncommitted)
+
+- Updated `README.md` to a comprehensive, visually rich Traditional Chinese (繁體中文) presentation document for public demonstration and external developers/photographers.
+- Documented core product capabilities: AUTO/P/S/A/M exposure modes, 1/3 EV step light metering, circle-of-confusion optical physics, Sony α1-style burst drive and buffer systems, AF frame size controls, EXIF and histogram photo playback, and cross-platform desktop/mobile controls.
+- Added a full 11-scene guide detailing lighting characteristics (EV levels), photography lessons, and recommended camera settings.
+- Documented keyboard shortcuts, mobile touch interactions, system architecture, performance optimizations (code-splitting, canvas pooling, 32-bit typed array grain, shared center raycast), and local setup/build commands.
+- Verified: `npm test` (28/28 tests passing), `npm run lint` (0 errors, 0 warnings), `tsc --noEmit` (0 errors).
+
