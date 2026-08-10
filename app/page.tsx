@@ -992,7 +992,17 @@ export default function Home() {
   const activeRawValue = activeControl === "shutter" ? shutter : activeControl === "aperture" ? aperture : activeControl === "iso" ? usingAutoIso ? ISO_AUTO_SCALE_VALUE : iso : exposureComp;
   const activeIndex = Math.max(0, activeOptions.indexOf(activeRawValue));
   const visibleScaleValues = activeControl
-    ? Array.from({ length: 9 }, (_, offset) => ({ index: clamp(activeIndex + offset - 4, 0, activeOptions.length - 1), position: offset * 12.5 })).filter((item, index, list) => list.findIndex(candidate => candidate.index === item.index) === index)
+    // Nine slots centred on the selected stop. Ticks are centred on their own
+    // position and the track clips its overflow, so the outermost slots are
+    // inset rather than sitting on 0 % and 100 % — the same margin the focal
+    // scale keeps. Slot 4 lands on 50 %, under the fixed pointer.
+    //
+    // Slots past either end of the range are dropped, not clamped: this is a
+    // dial that slides under a stationary pointer, so reaching the end of the
+    // travel must run the ticks out and leave that side blank. Clamping instead
+    // collapsed them onto the end stop and dragged the selected value away from
+    // the pointer it is supposed to sit under.
+    ? Array.from({ length: 9 }, (_, offset) => ({ index: activeIndex + offset - 4, position: 6 + offset * 11 })).filter(item => item.index >= 0 && item.index < activeOptions.length)
     : [];
   const activeLabel = activeControl === "shutter" ? "快門" : activeControl === "aperture" ? "光圈" : activeControl === "iso" ? "ISO" : "曝光值";
   const formatControlValue = (control: MobileControl | null, value: number) => control === "shutter" ? shutterLabel(value) : control === "aperture" ? `F${value}` : control === "iso" ? value === ISO_AUTO_SCALE_VALUE ? "AUTO" : `${value}` : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
@@ -1059,7 +1069,7 @@ export default function Home() {
       }}
     >
       {started
-        ? <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} aimX={0} aimY={0} frozen={libraryOpen} onFocus={setFocusRead} onLight={onLightReading} />
+        ? <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} aimX={0} aimY={0} frozen={libraryOpen} brightness={brightness} noise={noise} onFocus={setFocusRead} onLight={onLightReading} />
         : <div className="viewport-stage" aria-hidden="true" />}
       <div className="viewfinder-shade" />
       <div className="grid-lines"><i /><i /><i /><i /></div>

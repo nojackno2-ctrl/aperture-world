@@ -7,14 +7,14 @@ import { trajectoryDistance, verticalFieldOfView } from "./optics.mjs";
 import { captureSampleCount, cappedPixelRatio, nextPixelRatio, photoOutputSize, refreshTargetFps, shouldPrefetchScenes } from "./performance.mjs";
 import { buildScene, loadSceneModule, prefetchOtherScenes } from "./scene3d.mjs";
 import { disposeObjectTree } from "./three-lifecycle";
-import { LAYER, WORLD, depthBlurPlan, viewMeterAdjustment } from "./world.mjs";
+import { SHARP_BLUR_PX, WORLD, depthBandBlur, depthBlurPlan, depthPasses, viewMeterAdjustment } from "./world.mjs";
 
 type SceneKey = keyof typeof WORLD;
 /** Every scenario module exposes the same pair; the reference is type-only. */
 type SceneModule = typeof import("./scenes/landscape.mjs");
 type ThreeRuntime = typeof import("./three-runtime");
 type ShadowMesh = Mesh & { material: MeshBasicMaterial };
-type BuiltWorld = { key: SceneKey; scene: Scene; subjects: Object3D[]; shadows: ShadowMesh[]; sun: DirectionalLight; updaters: ((elapsed: number) => void)[]; world: { cameraHeight: number; pitch: number } };
+type BuiltWorld = { key: SceneKey; scene: Scene; subjects: Object3D[]; shadows: ShadowMesh[]; sun: DirectionalLight; updaters: ((elapsed: number) => void)[]; world: { cameraHeight: number; pitch: number }; layers: number[] };
 /** What the AF frame is sitting on, and how far the subject itself now stands. */
 export type FocusReading = { focusM: number; subjectM: number };
 export type LightReading = { ev: number };
@@ -31,9 +31,24 @@ export type CaptureRequest = { focalMm: number; fNumber: number; shutterSeconds:
 // lifetime to this component. The thumbnail is small enough to stay a plain string.
 export type CaptureResult = FocusReading & { width: number; height: number; thumb: string; image: Promise<Blob | null> };
 export type ViewportHandle = { setLook: (look: { yaw: number; pitch: number }) => void; capture: (request: CaptureRequest) => CaptureResult | null };
-type Props = { scene: SceneKey; focal: number; aimX: number; aimY: number; frozen?: boolean; onFocus?: (reading: FocusReading) => void; onLight?: (reading: LightReading) => void; onReady?: () => void };
+type Props = { scene: SceneKey; focal: number; aimX: number; aimY: number; frozen?: boolean; brightness?: number; noise?: number; onFocus?: (reading: FocusReading) => void; onLight?: (reading: LightReading) => void; onReady?: () => void };
 
-const BUCKETS = [LAYER.far, LAYER.subject, LAYER.near] as const;
+/**
+ * How the sensor renders what the lens delivered: exposure error as brightness,
+ * plus the desaturation and lost microcontrast of a pushed ISO. Written as a CSS
+ * filter string so the viewfinder and the captured file can run the identical
+ * response — a photo should never be the first place a setting becomes visible.
+ */
+export function sensorFilter(brightness: number, noise: number) {
+  const parts: string[] = [];
+  if (Math.abs(brightness - 1) > 0.002) parts.push(`brightness(${brightness.toFixed(3)})`);
+  if (noise > 0.01) {
+    parts.push(`saturate(${(1 - Math.min(0.4, noise)).toFixed(3)})`);
+    parts.push(`contrast(${(1 - Math.min(0.22, noise * 0.4)).toFixed(3)})`);
+  }
+  return parts.length ? parts.join(" ") : "none";
+}
+
 /** Nothing solid under the AF frame: the lens racks past the sky dome, to infinity. */
 const INFINITY_FOCUS_M = 4000;
 /** Re-reading the AF frame every frame is wasted work; the world moves slower than that. */
@@ -41,6 +56,8 @@ const FOCUS_PROBE_MS = 110;
 const PERFORMANCE_SAMPLE_MS = 1000;
 const LIGHT_METER_MS = 160;
 const MOTION_PROBE_SEGMENTS = 8;
+/** Grain tile size. Big enough that the repeat is not a visible weave at 1920 px. */
+const GRAIN_TILE_PX = 192;
 /** A reflected-light meter uses the same third-stop ladder as the camera controls; finer readings cannot change a setting. */
 const METER_STEP_EV = 1 / 3;
 const DEG2RAD = Math.PI / 180;
@@ -48,6 +65,10 @@ const DEG2RAD = Math.PI / 180;
 type Scratch = { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D };
 /** Surfaces a capture rewrites from scratch every time, so they can outlive one shot. */
 type ScratchPool = { layers: (Scratch | null)[]; composite: Scratch | null; thumb: Scratch | null; noise: { tile: Scratch; image: ImageData } | null };
+
+function clampByte(value: number) {
+  return value < 0 ? 0 : value > 255 ? 255 : value | 0;
+}
 
 function scratchCanvas(width: number, height: number): Scratch {
   const canvas = document.createElement("canvas");
@@ -68,19 +89,45 @@ function reuseScratch(slot: Scratch | null, width: number, height: number): Scra
   return slot;
 }
 
+/**
+ * One tile of sensor grain, centred on mid grey so `overlay` leaves the exposure
+ * where it found it. Built once and then slid to a new offset per shot: two
+ * frames of a burst must not carry identical noise, but neither is worth
+ * repainting 37,000 pixels for.
+ */
 function noisePattern(pool: ScratchPool, context: CanvasRenderingContext2D, seed: number) {
-  const tile = pool.noise?.tile ?? scratchCanvas(96, 96);
-  const image = pool.noise?.image ?? tile.context.createImageData(96, 96);
-  pool.noise = { tile, image };
-  let value = seed;
-  const data32 = new Uint32Array(image.data.buffer);
-  for (let index = 0; index < data32.length; index += 1) {
-    value = (value * 1103515245 + 12345) % 2147483648;
-    const grain = (96 + (value / 2147483648) * 128) | 0;
-    data32[index] = 0xff000000 | (grain << 16) | (grain << 8) | grain;
+  let cached = pool.noise;
+  if (!cached) {
+    const tile = scratchCanvas(GRAIN_TILE_PX, GRAIN_TILE_PX);
+    const image = tile.context.createImageData(GRAIN_TILE_PX, GRAIN_TILE_PX);
+    // xorshift32 through Math.imul. The plain LCG this replaced multiplied past
+    // 2^53 in double precision and lost exactly the low bits that make grain
+    // look like grain instead of a plaid.
+    let state = 0x9e3779b9;
+    const next = () => {
+      state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
+      state = Math.imul(state, 1) | 0;
+      return ((state >>> 8) & 0xffffff) / 0xffffff;
+    };
+    const data = image.data;
+    for (let index = 0; index < data.length; index += 4) {
+      // Luminance carries most of it; a smaller independent per-channel term is
+      // the colour speckle a sensor pushed past its native ISO actually makes.
+      const luma = (next() - 0.5) * 210;
+      data[index] = clampByte(128 + luma + (next() - 0.5) * 64);
+      data[index + 1] = clampByte(128 + luma + (next() - 0.5) * 64);
+      data[index + 2] = clampByte(128 + luma + (next() - 0.5) * 64);
+      data[index + 3] = 255;
+    }
+    tile.context.putImageData(image, 0, 0);
+    cached = pool.noise = { tile, image };
   }
-  tile.context.putImageData(image, 0, 0);
-  return context.createPattern(tile.canvas, "repeat");
+  const pattern = context.createPattern(cached.tile.canvas, "repeat");
+  if (pattern && typeof DOMMatrix === "function" && pattern.setTransform) {
+    const offset = Math.abs(seed | 0);
+    pattern.setTransform(new DOMMatrix([1, 0, 0, 1, offset % GRAIN_TILE_PX, (offset * 7) % GRAIN_TILE_PX]));
+  }
+  return pattern;
 }
 
 function firstMaterial(material: Material | Material[] | undefined) {
@@ -97,7 +144,7 @@ function collectMaterials(root: Object3D) {
   return [...materials];
 }
 
-const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene, focal, aimX, aimY, frozen = false, onFocus, onLight, onReady }, ref) {
+const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene, focal, aimX, aimY, frozen = false, brightness = 1, noise = 0, onFocus, onLight, onReady }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const viewRef = useRef({ focal, yaw: 0, pitch: 0, scene, frozen, aimX, aimY });
@@ -554,9 +601,25 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       const samples = captureSampleCount(motionPixels);
       const poses = exposureSamples(built.key, engine.elapsed, span, samples);
       const blur = depthBlurPlan(built.key, { focalMm: request.focalMm, fNumber: request.fNumber, imageWidthPx: width, ...reading });
+      // One pass per band the aperture can actually separate. Wide open on a long
+      // lens that is several; stopped down on a wide it collapses to a single
+      // render, which is cheaper than the three fixed buckets this replaced.
+      const passes = depthPasses(built.key, {
+        layers: built.layers,
+        bandBlur: depthBandBlur(built.key, { focalMm: request.focalMm, fNumber: request.fNumber, imageWidthPx: width, focusM: reading.focusM }),
+        subjectBlur: blur.subject,
+        subjectM: reading.subjectM,
+        // Depth resolution and temporal resolution are paid for out of the same
+        // budget: one full-resolution readback per pass per exposure sample. A
+        // frozen frame can afford the whole falloff; a sixty-sample smear spends
+        // its budget on the smear, which is what that photograph is about.
+        maxPasses: samples > 16 ? 3 : samples > 4 ? 4 : 6,
+      });
+      // A world with no banded geometry would otherwise composite nothing at all.
+      if (!passes.length) passes.push({ layers: built.layers.length ? [...built.layers] : [0], blur: 0 });
 
       const pool = engine.scratch;
-      const layers = BUCKETS.map((_, index) => (pool.layers[index] = reuseScratch(pool.layers[index] ?? null, width, height)));
+      const layers = passes.map((_, index) => (pool.layers[index] = reuseScratch(pool.layers[index] ?? null, width, height)));
       const shakeRadians = ((request.shakePx / width) * verticalFieldOfView(request.focalMm, camera.aspect) * camera.aspect * Math.PI) / 180;
       const shakeAngle = (engine.elapsed % 1) * Math.PI * 2;
       const invSamplesMinus1 = 1 / Math.max(1, samples - 1);
@@ -619,12 +682,13 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
             renderer.render(built.scene, camera);
             engine.captureMaterials.forEach((material, index) => { material.colorWrite = colorWriteStates[index]; });
 
-            BUCKETS.forEach((bucket, index) => {
+            passes.forEach((pass, index) => {
               if (index > 0) {
                 renderer.setClearColor(0x000000, 0);
                 renderer.clear(true, false, false);
               }
-              camera.layers.set(bucket);
+              camera.layers.disableAll();
+              for (const layer of pass.layers) camera.layers.enable(layer);
               renderer.render(built.scene, camera);
               layers[index].context.drawImage(source, 0, 0, width, height);
             });
@@ -651,10 +715,11 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       for (const layer of layers) { layer.context.globalAlpha = 1; layer.context.globalCompositeOperation = "source-over"; }
 
       const composite = (pool.composite = reuseScratch(pool.composite, width, height));
-      const radii = [blur.far, blur.subject, blur.near];
       layers.forEach((layer, index) => {
-        const radius = radii[index];
-        composite.context.filter = radius > 0.35 ? `blur(${radius.toFixed(2)}px)` : "none";
+        const radius = passes[index].blur;
+        composite.context.filter = radius > SHARP_BLUR_PX ? `blur(${radius.toFixed(2)}px)` : "none";
+        // Only the backmost pass is oversized: blurring it inside the frame would
+        // pull the empty margin in and darken the edges of the photograph.
         const bleed = index === 0 ? Math.ceil(radius) : 0;
         composite.context.drawImage(layer.canvas, -bleed, -bleed, width + bleed * 2, height + bleed * 2);
       });
@@ -663,15 +728,22 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
       // The only surface allocated per shot: `toBlob` encodes it asynchronously, so
       // it must not be the canvas the next frame of a burst starts painting over.
       const output = scratchCanvas(width, height);
-      output.context.filter = `brightness(${request.brightness.toFixed(3)}) saturate(${(1 - Math.min(0.4, request.noise)).toFixed(3)})`;
+      output.context.filter = sensorFilter(request.brightness, request.noise);
       output.context.drawImage(composite.canvas, 0, 0);
       output.context.filter = "none";
       if (request.noise > 0.01) {
         const pattern = noisePattern(pool, output.context, Math.floor(engine.elapsed * 1000) + 7);
         if (pattern) {
-          output.context.globalAlpha = Math.min(0.55, request.noise);
-          output.context.globalCompositeOperation = "soft-light";
           output.context.fillStyle = pattern;
+          // Overlay holds the exposure and puts grain through the midtones, but
+          // it fades out exactly where a pushed sensor is noisiest. A much
+          // weaker screen pass adds the speckle and the lifted black point that
+          // are what high ISO really looks like in the shadows.
+          output.context.globalCompositeOperation = "overlay";
+          output.context.globalAlpha = Math.min(0.8, request.noise * 1.25);
+          output.context.fillRect(0, 0, width, height);
+          output.context.globalCompositeOperation = "screen";
+          output.context.globalAlpha = request.noise * 0.12;
           output.context.fillRect(0, 0, width, height);
           output.context.globalAlpha = 1;
           output.context.globalCompositeOperation = "source-over";
@@ -691,7 +763,10 @@ const Viewport3D = forwardRef<ViewportHandle, Props>(function Viewport3D({ scene
     },
   }), []);
 
-  return <canvas ref={canvasRef} className="live-canvas" />;
+  // Exposure simulation. The filter is applied by the compositor to the canvas
+  // element, so the WebGL buffer a capture reads back is untouched and the
+  // response is never applied twice.
+  return <canvas ref={canvasRef} className="live-canvas" style={{ filter: sensorFilter(brightness, noise) }} />;
 });
 
 export default Viewport3D;
