@@ -1,4 +1,4 @@
-import { WORLD } from "./world.mjs";
+import { DEPTH_BANDS, DEPTH_LAYER_BASE, SUBJECT_LAYER, WORLD, depthBandFor } from "./world.mjs";
 import { lighting, skyDome } from "./scene-kit.mjs";
 
 /**
@@ -19,16 +19,16 @@ export { BIRD_COUNT } from "./scene-kit.mjs";
  * eleven worlds back into a single chunk, which is exactly what this avoids.
  */
 const SCENE_LOADERS = {
-  landscape: () => import("./scenes/landscape.mjs"),
-  bird: () => import("./scenes/bird.mjs"),
-  sports: () => import("./scenes/sports.mjs"),
-  portrait: () => import("./scenes/portrait.mjs"),
-  group: () => import("./scenes/group.mjs"),
-  street: () => import("./scenes/street.mjs"),
-  night: () => import("./scenes/night.mjs"),
-  starry: () => import("./scenes/starry.mjs"),
-  city_night: () => import("./scenes/city_night.mjs"),
-  airport: () => import("./scenes/airport.mjs"),
+  landscape: () => import("./scenes/landscape.mjs"),
+  bird: () => import("./scenes/bird.mjs"),
+  sports: () => import("./scenes/sports.mjs"),
+  portrait: () => import("./scenes/portrait.mjs"),
+  group: () => import("./scenes/group.mjs"),
+  street: () => import("./scenes/street.mjs"),
+  night: () => import("./scenes/night.mjs"),
+  starry: () => import("./scenes/starry.mjs"),
+  city_night: () => import("./scenes/city_night.mjs"),
+  airport: () => import("./scenes/airport.mjs"),
   outdoor_portrait: () => import("./scenes/outdoor_portrait.mjs"),
 };
 
@@ -150,6 +150,57 @@ export function buildScene(THREE, key, mergeGeometries, sceneModule) {
     object.matrixAutoUpdate = false;
   });
 
+  // Depth banding. Three buckets blurred a hedge ten metres out by exactly the
+  // amount computed for a ridge two kilometres away, so stopping down changed
+  // almost nothing on screen. Re-file every static mesh by its measured distance
+  // from the tripod instead. This runs before the batcher below, whose signature
+  // already keys on the layer mask, so a band still costs one draw call.
+  //
+  // An object whose bounding sphere dwarfs its own centre distance — the sky
+  // dome, a ground slab, a valley floor — reaches through too many bands to
+  // belong to any of them. Those stay on the focused plane, which is what they
+  // effectively were before, rather than being blurred as if they sat at their
+  // own centre. Genuine props are compact, and they are where the falloff shows.
+  scene.updateMatrixWorld(true);
+  const eye = new THREE.Vector3(0, world.cameraHeight, 0);
+  const centre = new THREE.Vector3();
+  const focusLayer = DEPTH_LAYER_BASE + depthBandFor(key, world.focus);
+  const horizonLayer = DEPTH_LAYER_BASE + DEPTH_BANDS - 1;
+  const occupied = new Set();
+  scene.traverse(object => {
+    if (object === scene) return;
+    // Every light has to reach every band, or a band renders unlit. Scene-level
+    // lanterns and neon were previously visible only to the layer they defaulted
+    // onto, which left subjects in the night worlds lit differently in the photo
+    // than in the viewfinder.
+    if (object.isLight) {
+      object.layers.enableAll();
+      if (object.shadow) object.shadow.camera.layers.enableAll();
+      return;
+    }
+    if (!object.isMesh && !object.isPoints && !object.isLine) return;
+    if (isDynamic(object)) {
+      object.layers.set(SUBJECT_LAYER);
+      occupied.add(SUBJECT_LAYER);
+      return;
+    }
+    let layer = focusLayer;
+    if (object.userData.infinite || object.userData.isCelestial) layer = horizonLayer;
+    else if (object.geometry) {
+      if (!object.geometry.boundingSphere) object.geometry.computeBoundingSphere();
+      const sphere = object.geometry.boundingSphere;
+      if (sphere) {
+        centre.copy(sphere.center).applyMatrix4(object.matrixWorld);
+        const distance = centre.distanceTo(eye);
+        if (sphere.radius * object.matrixWorld.getMaxScaleOnAxis() <= distance * 0.75) {
+          layer = DEPTH_LAYER_BASE + depthBandFor(key, distance);
+        }
+      }
+    }
+    object.layers.set(layer);
+    occupied.add(layer);
+  });
+
   // A detailed city or stadium can otherwise cost more than 100 draw calls.
   // Merge opaque static meshes that share a material into one GPU batch while
   // keeping their depth layer intact. Merged geometry still participates in AF
@@ -194,5 +245,7 @@ export function buildScene(THREE, key, mergeGeometries, sceneModule) {
     }
   });
 
-  return { scene, subjects, shadows, sun, updaters: extra.updaters ?? [], world };
+  // Only the bands that actually hold geometry. An empty band still costs a
+  // clear and a full-resolution readback per exposure sample, for nothing.
+  return { scene, subjects, shadows, sun, updaters: extra.updaters ?? [], world, layers: [...occupied] };
 }

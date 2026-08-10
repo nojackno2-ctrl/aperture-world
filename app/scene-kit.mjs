@@ -97,6 +97,9 @@ export function skyDome(THREE, scene, [top, bottom]) {
   const dome = new THREE.Mesh(new THREE.SphereGeometry(1400, 32, 18), material);
   // The dome is not a thing you can focus on: an AF frame over it means infinity.
   dome.raycast = () => {};
+  // …and it wraps the tripod, so its centre distance is zero. Depth banding has
+  // to be told this is the horizon, not the closest object in the scene.
+  dome.userData.infinite = true;
   return put(scene, dome, LAYER.far, [0, 0, 0]);
 }
 

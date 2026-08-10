@@ -7,7 +7,7 @@ import { build3DBat, build3DFox, build3DFrog, build3DHamster, build3DHedgehog, b
 import { BIRD_COUNT } from "../app/scene3d.mjs";
 import { horizontalFieldOfView, trajectoryDistance, verticalFieldOfView } from "../app/optics.mjs";
 import { CAPTURE_SAMPLE_SPACING_PX, MAX_CAPTURE_SAMPLES, MAX_LIVE_PIXELS, MIN_PHOTO_LONG_EDGE, MIN_PHOTO_SHORT_EDGE, TARGET_RENDER_FPS, cappedPixelRatio, captureSampleCount, nextPixelRatio, photoOutputSize, refreshTargetFps, shouldPrefetchScenes } from "../app/performance.mjs";
-import { LAYER, WORLD, circleOfConfusionMm, defocusBlurPixels, depthBlurPlan, viewMeterAdjustment } from "../app/world.mjs";
+import { DEPTH_BANDS, DEPTH_LAYER_BASE, LAYER, SUBJECT_LAYER, WORLD, circleOfConfusionMm, defocusBlurPixels, depthBandBlur, depthBandDistance, depthBandEdges, depthBandFor, depthBlurPlan, depthPasses, viewMeterAdjustment } from "../app/world.mjs";
 import { SECURITY_HEADERS, withSecurityHeaders } from "../worker/security.mjs";
 
 const templateRoot = new URL("../", import.meta.url);
@@ -325,13 +325,15 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.doesNotMatch(viewport, /lightExposureAt\(/);
   assert.match(viewport, /exposureSamples\(/);
   assert.match(viewport, /toDataURL/);
-  assert.match(viewport, /camera\.layers\.set\(bucket\)/);
+  assert.match(viewport, /camera\.layers\.enable\(layer\)/, "a capture pass renders every depth band it covers");
+  assert.match(viewport, /depthPasses\(built\.key/, "capture plans its render passes from the occupied depth bands");
   assert.match(viewport, /engine\.captureMaterials = collectMaterials\(built\.scene\)/, "capture caches every scene material for the depth-only pass");
   assert.match(viewport, /material\.colorWrite = false/, "the occlusion pass writes depth without painting color");
   const depthPass = viewport.indexOf("engine.captureMaterials.forEach(material => { material.colorWrite = false; });");
-  const bucketPass = viewport.indexOf("BUCKETS.forEach((bucket, index) =>", depthPass);
+  const bucketPass = viewport.indexOf("passes.forEach((pass, index) =>", depthPass);
   assert.ok(depthPass >= 0 && bucketPass > depthPass, "the complete-scene depth pass runs before any isolated blur bucket");
   assert.match(viewport, /renderer\.clear\(true, false, false\)/, "later buckets clear color while preserving complete-scene depth occlusion");
+  assert.match(viewport, /className="live-canvas" style=\{\{ filter: sensorFilter\(brightness, noise\) \}\}/, "the viewfinder previews exposure instead of hiding it until playback");
   assert.match(viewport, /renderer\.autoClear = previousAutoClear/, "capture restores the live renderer's automatic clearing mode");
   // Every photographable subject is procedural 3D geometry: no flat cutouts,
   // no canvas-painted people, no bitmap subject art anywhere in the world.
@@ -970,6 +972,65 @@ test("the AF frame decides which plane comes out sharp", () => {
   const tele = { focalMm: 300, fNumber: 5.6, imageWidthPx: 1440 };
   assert.equal(depthBlurPlan("bird", { ...tele, focusM: 23, subjectM: 23 }).subject, 0, "focus locked on the bird keeps the bird sharp wherever it flew");
   assert.ok(depthBlurPlan("bird", { ...tele, focusM: WORLD.bird.focus, subjectM: 23 }).subject > 2, "…and the nominal plane alone would have left it soft");
+});
+
+test("depth bands separate a scene by real distance, so aperture is visible everywhere", () => {
+  // Bands cover the scenario end to end and never cross.
+  for (const scene of Object.keys(WORLD)) {
+    const edges = depthBandEdges(scene);
+    assert.equal(edges.length, DEPTH_BANDS - 1, `${scene} splits into ${DEPTH_BANDS} bands`);
+    for (let index = 1; index < edges.length; index += 1) assert.ok(edges[index] > edges[index - 1], `${scene} band edges ascend`);
+    assert.equal(depthBandFor(scene, 0.01), 0, `${scene} files anything underfoot in the nearest band`);
+    assert.equal(depthBandFor(scene, WORLD[scene].far * 40), DEPTH_BANDS - 1, `${scene} files the horizon in the farthest band`);
+    const bands = Array.from({ length: DEPTH_BANDS }, (_, band) => depthBandDistance(scene, band));
+    for (let band = 1; band < bands.length; band += 1) assert.ok(bands[band] > bands[band - 1], `${scene} band distances ascend`);
+    assert.equal(depthBandFor(scene, WORLD[scene].near), depthBandFor(scene, WORLD[scene].near), "banding is stable");
+  }
+
+  // The failure this replaces: every scene had one background bucket measured at
+  // its farthest distance, so a mid-distance background could not blur at all.
+  const banded = depthBandBlur("landscape", { focalMm: 24, fNumber: 1.4, imageWidthPx: 1920, focusM: 8 });
+  const focused = depthBandFor("landscape", 8);
+  assert.ok(banded[focused] < 0.35, "the band under the AF frame is the sharp one");
+  assert.ok(banded[0] > 2, "…the ground at the photographer's feet is thrown well out");
+  for (let band = focused + 2; band < DEPTH_BANDS; band += 1) {
+    assert.ok(banded[band] >= banded[band - 1] - 1e-9, "behind the focus plane, blur grows with distance toward its asymptote");
+  }
+  assert.ok(banded[DEPTH_BANDS - 1] > 1, "…so the horizon is genuinely soft, which one shared background bucket could never show");
+
+  const open = depthBandBlur("outdoor_portrait", { focalMm: 85, fNumber: 1.4, imageWidthPx: 1920, focusM: 3.8 });
+  const shut = depthBandBlur("outdoor_portrait", { focalMm: 85, fNumber: 16, imageWidthPx: 1920, focusM: 3.8 });
+  for (let band = 0; band < DEPTH_BANDS; band += 1) assert.ok(shut[band] <= open[band] + 1e-9, "stopping down never blurs more");
+  assert.ok(open.reduce((a, b) => a + b, 0) > shut.reduce((a, b) => a + b, 0) * 3, "f/1.4 and f/16 must not look alike");
+});
+
+test("a capture costs one render pass per band the aperture can actually separate", () => {
+  const layers = Array.from({ length: DEPTH_BANDS }, (_, band) => DEPTH_LAYER_BASE + band).concat(SUBJECT_LAYER);
+
+  const stoppedDown = depthPasses("landscape", {
+    layers, bandBlur: depthBandBlur("landscape", { focalMm: 24, fNumber: 11, imageWidthPx: 1920, focusM: 90 }), subjectBlur: 0, subjectM: 90,
+  });
+  assert.ok(stoppedDown.length <= 2, "a stopped-down wide is sharp almost throughout and collapses to a render or two");
+
+  const wideOpen = depthPasses("portrait", {
+    layers, bandBlur: depthBandBlur("portrait", { focalMm: 85, fNumber: 1.4, imageWidthPx: 1920, focusM: 4.2 }), subjectBlur: 0, subjectM: 4.2,
+  });
+  assert.ok(wideOpen.length > stoppedDown.length, "wide open, the falloff has to be resolved across more passes");
+  assert.ok(wideOpen.length <= 6, "…but never more passes than the readback budget allows");
+  assert.ok(depthPasses("portrait", {
+    layers, bandBlur: depthBandBlur("portrait", { focalMm: 85, fNumber: 1.4, imageWidthPx: 1920, focusM: 4.2 }), subjectBlur: 0, subjectM: 4.2, maxPasses: 3,
+  }).length === 3, "a long exposure can trade depth passes for temporal samples");
+
+  // Painter's order: the composite draws back to front, so passes must arrive
+  // farthest first or a near band would be overpainted by the sky behind it.
+  const depthOf = pass => Math.max(...pass.layers.map(layer => layer === SUBJECT_LAYER ? 4.2 : depthBandDistance("portrait", layer - DEPTH_LAYER_BASE)));
+  for (let index = 1; index < wideOpen.length; index += 1) {
+    assert.ok(depthOf(wideOpen[index - 1]) > depthOf(wideOpen[index]), "passes composite back to front");
+  }
+  const seen = wideOpen.flatMap(pass => pass.layers);
+  assert.equal(new Set(seen).size, seen.length, "no layer is rendered into two passes");
+  assert.equal(seen.length, layers.length, "and every occupied layer reaches the photograph");
+  assert.ok(wideOpen.some(pass => pass.layers.includes(SUBJECT_LAYER)), "the subject composites at its own measured distance");
 });
 
 test("moving subjects circle continuously through three dimensions", () => {
