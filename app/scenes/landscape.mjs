@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { bench, block, boulder, build3DBird, build3DBunny, build3DDeer, build3DFloatingDuck, build3DGrazingDeer, build3DHuman, build3DPerchedBird, build3DRestingDeer, build3DSquirrel, contactShadow, cylinder, fence, flowerPatch, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
+import { bench, block, boulder, build3DBird, build3DBunny, build3DDeer, build3DFloatingDuck, build3DFox, build3DGrazingDeer, build3DHedgehog, build3DHuman, build3DPerchedBird, build3DRestingDeer, build3DSquirrel, contactShadow, cylinder, fence, flowerPatch, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
 
 /** Static world for the `landscape` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -148,6 +148,14 @@ export function terrain(THREE, scene) {
 
   const squirrel = build3DSquirrel(THREE, "#c2410c");
   put(scene, squirrel, LAYER.far, [-11.5, 1.0, -17], [0, 0.6, 0]);
+
+  const meadowFox = build3DFox(THREE, "#ea580c");
+  put(scene, meadowFox, LAYER.far, [19.5, 0.02, -39], [0, -0.8, 0]);
+  contactShadow(THREE, scene, 0.32).position.set(19.5, 0.03, -39);
+
+  const trailHedgehog = build3DHedgehog(THREE, "#57534e");
+  put(scene, trailHedgehog, LAYER.far, [-18.5, 0.02, -24], [0, 0.55, 0]);
+  contactShadow(THREE, scene, 0.18).position.set(-18.5, 0.03, -24);
 
   // A camper by the tent gives the valley a sense of scale.
   const camper = build3DHuman(THREE, { pose: "stand", top: "#dc2626", bottom: "#1f2937", hair: "#3f2a1b", hat: "#0f766e", layer: LAYER.far, prop: "camera" });

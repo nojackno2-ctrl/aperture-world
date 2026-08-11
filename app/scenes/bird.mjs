@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { BIRD_COUNT, block, build3DBird, build3DFloatingDuck, build3DHuman, build3DPerchedBird, build3DStandingHeron, build3DTurtle, contactShadow, cylinder, fence, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
+import { BIRD_COUNT, block, build3DBird, build3DFloatingDuck, build3DFrog, build3DHuman, build3DPerchedBird, build3DStandingHeron, build3DSwan, build3DTurtle, contactShadow, cylinder, fence, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
 
 /** Static world for the `bird` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -136,6 +136,12 @@ export function terrain(THREE, scene) {
 
   const turtle = build3DTurtle(THREE, "#365314");
   put(scene, turtle, LAYER.far, [8, 0.82, -22], [0.3, 0.2, 0]);
+
+  const reedFrog = build3DFrog(THREE, "#65a30d");
+  put(scene, reedFrog, LAYER.far, [4.8, 0.08, -10.8], [0, -0.4, 0]);
+
+  const marshSwan = build3DSwan(THREE, "#f8fafc");
+  put(scene, marshSwan, LAYER.far, [-14, 0.04, -24], [0, 0.65, 0]);
 
   return {};
 }

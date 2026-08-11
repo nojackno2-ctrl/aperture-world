@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { block, build3DCat, build3DHuman, build3DLyingDog, build3DPerchedBird, build3DSleepingCat, contactShadow, cylinder, put, rand, slab, sphere, surface } from "../scene-kit.mjs";
+import { block, build3DCat, build3DHamster, build3DHuman, build3DLyingDog, build3DPerchedBird, build3DSleepingCat, contactShadow, cylinder, put, rand, slab, sphere, surface } from "../scene-kit.mjs";
 
 /** Static world for the `portrait` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -97,6 +97,9 @@ export function terrain(THREE, scene) {
 
   const shelfBird = build3DPerchedBird(THREE, "#38bdf8", "#f59e0b");
   put(scene, shelfBird, LAYER.far, [2.6, 2.13, -8.98], [0, -0.4, 0]);
+
+  const dresserHamster = build3DHamster(THREE, "#d97706", LAYER.near);
+  put(scene, dresserHamster, LAYER.near, [2.68, 0.88, -1.42], [0, -0.55, 0]);
 
   return {};
 }

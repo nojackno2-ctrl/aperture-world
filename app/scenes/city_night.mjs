@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { bench, block, build3DBird, build3DCar, build3DHuman, build3DPerchedBird, build3DSittingDog, contactShadow, cylinder, facadeBlock, facadeTexture, put, rand, slab, sphere, tree } from "../scene-kit.mjs";
+import { bench, block, build3DBat, build3DBird, build3DCar, build3DFox, build3DHuman, build3DPerchedBird, contactShadow, cylinder, facadeBlock, facadeTexture, put, rand, slab, sphere, tree } from "../scene-kit.mjs";
 
 /** Static world for the `city_night` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -179,9 +179,12 @@ export function terrain(THREE, scene) {
   // Static wildlife
   const lookoutHawk = build3DPerchedBird(THREE, "#475569", "#f59e0b");
   put(scene, lookoutHawk, LAYER.far, [-9.0, 1.18, -8.2], [0, 0.5, 0]);
-  const mountainFox = build3DSittingDog(THREE, "#ea580c");
+  const mountainFox = build3DFox(THREE, "#ea580c");
   put(scene, mountainFox, LAYER.far, [6.6, 0.08, -5.6], [0, -0.6, 0]);
   contactShadow(THREE, scene, 0.35).position.set(6.6, 0.09, -5.6);
+
+  const skylineBat = build3DBat(THREE, "#312e81");
+  put(scene, skylineBat, LAYER.far, [-5.2, 3.6, -13.5], [0.12, 0.5, -0.08]);
 
   return {};
 }

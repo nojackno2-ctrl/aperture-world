@@ -4,8 +4,91 @@ import { FULL_FRAME_SENSOR_WIDTH_MM } from "./optics.mjs";
  * @typedef {"landscape" | "bird" | "sports" | "portrait" | "group" | "street" | "night" | "starry" | "city_night" | "airport" | "outdoor_portrait"} SceneKey
  */
 
-/** Render buckets. Objects are grouped by depth so a capture can blur each band independently. */
+/**
+ * Depth hints used while a scenario is being authored: is this piece of geometry
+ * the subject, something in front of it, or the world behind it. `buildScene`
+ * replaces them with a measured depth band (below) before the first frame, so a
+ * builder never has to guess how far away it just put a bench.
+ */
 export const LAYER = { far: 0, subject: 1, near: 2 };
+
+/**
+ * Moving subjects keep a layer of their own. Their distance is whatever the AF
+ * frame reads at the instant the shutter fires, which for a bird or a sprinter
+ * is nowhere near where the scene builder first placed them.
+ */
+export const SUBJECT_LAYER = 3;
+/** Static geometry is re-filed onto `DEPTH_LAYER_BASE + band` by its real distance. */
+export const DEPTH_LAYER_BASE = 4;
+/**
+ * Bands per scenario. Three buckets could not tell a hedge from a mountain.
+ *
+ * Every band is a batching boundary — same-material props on opposite sides of
+ * one cannot share a draw call — so this is bought with render-list length, and
+ * ten is where the curve flattens: `depthPasses` collapses adjacent bands the
+ * aperture cannot separate anyway, and never composites more than six.
+ */
+export const DEPTH_BANDS = 10;
+/** Below this radius a blur is invisible, so the capture skips the filter entirely. */
+export const SHARP_BLUR_PX = 0.35;
+
+const bandEdgeCache = new Map();
+
+/**
+ * Distances that split one scenario into depth bands. Defocus follows 1/distance,
+ * so equal *ratios* — not equal metres — put the boundaries where the circle of
+ * confusion actually changes: a band edge every few metres up close, every few
+ * hundred out at the horizon.
+ *
+ * @param {SceneKey} scene
+ * @returns {number[]} `DEPTH_BANDS - 1` ascending edges
+ */
+export function depthBandEdges(scene) {
+  const cached = bandEdgeCache.get(scene);
+  if (cached) return cached;
+  const world = WORLD[scene] ?? WORLD.landscape;
+  const nearest = Math.max(0.3, world.near * 0.5);
+  const farthest = Math.max(nearest * 4, world.far);
+  const interior = DEPTH_BANDS - 2;
+  const ratio = Math.pow(farthest / nearest, 1 / interior);
+  const edges = Array.from({ length: interior + 1 }, (_, index) => nearest * Math.pow(ratio, index));
+  bandEdgeCache.set(scene, edges);
+  return edges;
+}
+
+/**
+ * Band holding an object this far from the tripod. Band 0 is everything closer
+ * than the scenario's foreground, the last band is everything at or beyond its
+ * horizon — including the sky, which has no distance at all.
+ *
+ * @param {SceneKey} scene
+ * @param {number} distanceM
+ * @returns {number}
+ */
+export function depthBandFor(scene, distanceM) {
+  const edges = depthBandEdges(scene);
+  const last = edges.length - 1;
+  if (!(distanceM > edges[0])) return 0;
+  if (distanceM >= edges[last]) return DEPTH_BANDS - 1;
+  const ratio = edges[1] / edges[0];
+  return 1 + Math.min(last - 1, Math.floor(Math.log(distanceM / edges[0]) / Math.log(ratio)));
+}
+
+/**
+ * The distance a whole band is blurred as. Interior bands use the geometric mean
+ * of their edges, which is the middle of a band whose extent is a ratio.
+ *
+ * @param {SceneKey} scene
+ * @param {number} band
+ * @returns {number} metres
+ */
+export function depthBandDistance(scene, band) {
+  const edges = depthBandEdges(scene);
+  const last = edges.length - 1;
+  if (band <= 0) return edges[0] * 0.65;
+  if (band >= DEPTH_BANDS - 1) return edges[last] * 2.5;
+  return Math.sqrt(edges[band - 1] * edges[band]);
+}
 
 /**
  * Per-scenario world setup. Distances are metres, the tripod always sits at
@@ -109,4 +192,76 @@ export function depthBlurPlan(scene, { focalMm, fNumber, imageWidthPx, focusM, s
   const plane = focusM > 0 ? focusM : world.focus;
   const at = objectM => defocusBlurPixels({ focalMm, fNumber, focusM: plane, objectM, imageWidthPx });
   return { near: at(world.near), subject: at(subjectM > 0 ? subjectM : world.focus), far: at(world.far) };
+}
+
+/**
+ * Blur radius for every depth band of one scenario, indexed by band.
+ *
+ * @param {SceneKey} scene
+ * @param {{focalMm: number, fNumber: number, imageWidthPx: number, focusM?: number}} camera
+ * @returns {number[]} `DEPTH_BANDS` radii in rendered pixels
+ */
+export function depthBandBlur(scene, { focalMm, fNumber, imageWidthPx, focusM }) {
+  const world = WORLD[scene] ?? WORLD.landscape;
+  const plane = focusM > 0 ? focusM : world.focus;
+  return Array.from({ length: DEPTH_BANDS }, (_, band) => defocusBlurPixels({
+    focalMm, fNumber, imageWidthPx, focusM: plane, objectM: depthBandDistance(scene, band),
+  }));
+}
+
+/** Two bands a photograph cannot tell apart, so they may share one render pass. */
+function indistinguishable(a, b) {
+  if (a <= SHARP_BLUR_PX && b <= SHARP_BLUR_PX) return true;
+  return Math.abs(a - b) <= Math.max(0.5, Math.max(a, b) * 0.2);
+}
+
+/**
+ * Plan the render passes one capture needs, ordered far to near.
+ *
+ * Every occupied band could be rendered and blurred on its own, but that costs a
+ * full-resolution readback per band per exposure sample. Bands whose circles of
+ * confusion are within a fifth of each other are indistinguishable once blurred,
+ * so they collapse into a single pass: a landscape at f/11 comes out as one
+ * render, while a portrait wide open still resolves its background falloff.
+ *
+ * @param {SceneKey} scene
+ * @param {{layers: number[], bandBlur: number[], subjectBlur?: number, subjectM?: number, maxPasses?: number}} plan
+ * @returns {{layers: number[], blur: number}[]}
+ */
+export function depthPasses(scene, { layers, bandBlur, subjectBlur = 0, subjectM = 0, maxPasses = 6 }) {
+  const world = WORLD[scene] ?? WORLD.landscape;
+  const entries = [];
+  for (const layer of layers) {
+    if (layer === SUBJECT_LAYER) entries.push({ layer, distance: subjectM > 0 ? subjectM : world.focus, blur: subjectBlur });
+    else if (layer >= DEPTH_LAYER_BASE && layer < DEPTH_LAYER_BASE + DEPTH_BANDS) {
+      const band = layer - DEPTH_LAYER_BASE;
+      entries.push({ layer, distance: depthBandDistance(scene, band), blur: bandBlur[band] ?? 0 });
+    }
+  }
+  if (!entries.length) return [];
+  entries.sort((a, b) => b.distance - a.distance);
+
+  const passes = [];
+  for (const entry of entries) {
+    const open = passes[passes.length - 1];
+    if (open && indistinguishable(open.blur, entry.blur)) {
+      open.layers.push(entry.layer);
+      open.blur += (entry.blur - open.blur) / open.layers.length;
+    } else passes.push({ layers: [entry.layer], blur: entry.blur });
+  }
+
+  // A cap on passes is a cap on readbacks per exposure sample. Give up the
+  // smallest blur difference first, so what is sacrificed is what shows least.
+  while (passes.length > maxPasses) {
+    let seam = 0;
+    for (let index = 1; index < passes.length - 1; index += 1) {
+      if (Math.abs(passes[index].blur - passes[index + 1].blur) < Math.abs(passes[seam].blur - passes[seam + 1].blur)) seam = index;
+    }
+    const [merged] = passes.splice(seam + 1, 1);
+    const host = passes[seam];
+    const weight = merged.layers.length / (host.layers.length + merged.layers.length);
+    host.blur += (merged.blur - host.blur) * weight;
+    host.layers.push(...merged.layers);
+  }
+  return passes;
 }

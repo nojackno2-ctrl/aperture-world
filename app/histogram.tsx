@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import "./histogram.css";
 
 type Props = {
   image: string | Blob;

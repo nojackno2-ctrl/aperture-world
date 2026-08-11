@@ -2,7 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { horizontalFieldOfView } from "./optics.mjs";
+import { horizontalFieldOfView, trajectoryDistance } from "./optics.mjs";
+import { type Photo } from "./photo-library";
 import { type FocusReading, type LightReading, type ViewportHandle } from "./viewport";
 
 const Viewport3D = dynamic(() => import("./viewport"), {
@@ -10,16 +11,34 @@ const Viewport3D = dynamic(() => import("./viewport"), {
   loading: () => <div className="viewport-stage" />
 });
 
-// The renderer is the largest thing this page downloads and the canvas mounts
-// straight away, but the chunks were only requested from the viewport's mount
-// effect — behind hydration. Requesting them the moment this module executes
-// overlaps the transfer with hydration instead of queueing behind it. The
-// module registry dedupes, so the viewport's own imports resolve immediately.
-if (typeof window !== "undefined") {
-  void import("./three-runtime");
-  void import("three/addons/utils/BufferGeometryUtils.js");
+const loadCameraStyles = () => import("./camera-styles");
+const CameraStyles = dynamic(() => loadCameraStyles(), { ssr: false });
+
+const loadPhotoLibrary = () => import("./photo-library");
+const PhotoLibrary = dynamic(() => loadPhotoLibrary().then(module => module.PhotoLibrary), {
+  ssr: false,
+  loading: () => <div className="gallery-loading" role="status"><span>相片庫載入中…</span></div>,
+});
+
+// Keep the 3D stack off the start-screen path. Intent events warm the two large
+// renderer dependencies before activation, while the module registry dedupes
+// them with the viewport's own imports when play actually begins.
+let rendererWarmPromise: Promise<unknown> | null = null;
+function warmRenderer() {
+  rendererWarmPromise ??= Promise.all([
+    import("./three-runtime"),
+    import("three/addons/utils/BufferGeometryUtils.js"),
+  ]).then(
+    () => undefined,
+    () => { rendererWarmPromise = null; },
+  );
+  return rendererWarmPromise;
 }
-import { Histogram } from "./histogram";
+
+function warmCameraExperience() {
+  void warmRenderer();
+  return loadCameraStyles();
+}
 import { LOOK_LIMITS, WORLD, depthBlurPlan } from "./world.mjs";
 
 type Mode = "AUTO" | "P" | "S" | "A" | "M";
@@ -29,8 +48,6 @@ type AfFrameSize = "small" | "medium" | "large";
 type SceneKey = keyof typeof WORLD;
 type MobileControl = "shutter" | "aperture" | "exposure" | "iso";
 type Scenario = { id: SceneKey; eyebrow: string; title: string; brief: string; lesson: string; sceneEv: number; speed: number; focal: [number, number]; aperture: [number, number]; minShutter: number; accent: string };
-type Photo = { id: number; scene: SceneKey; score: number; title: string; settings: string; image: Blob; thumb: string; params: { mode: string; drive: string; shutter: string; aperture: string; iso: string; focal: string; ev: string; lens: string; focus: string } };
-type Result = { photoId: number; score: number; title: string; notes: string[]; scene: SceneKey; params?: { mode: string; drive: string; shutter: string; aperture: string; iso: string; focal: string; ev: string; lens: string; focus: string } };
 type Look = { yaw: number; pitch: number };
 type ExposureState = { startTime: number; durationSeconds: number; remainingSeconds: number; progress: number; trajectory: Look[] };
 
@@ -58,7 +75,6 @@ const BUFFER_SEGMENTS = 12;
 const BUFFER_SEGMENT_INDICES = Array.from({ length: BUFFER_SEGMENTS }, (_, index) => index);
 /** Frames the memory card holds. Shooting stops when it fills, like a real body. */
 const CARD_CAPACITY = 2000;
-
 const SCENARIOS: Scenario[] = [
   { id: "landscape", eyebrow: "01 · 清晨風景", title: "山谷第一道光", brief: "保留天空層次，讓前後景都清楚。", lesson: "縮小光圈能增加景深；腳架可換取較慢快門。", sceneEv: 12.4, speed: 0, focal: [24, 50], aperture: [8, 16], minShutter: 1 / 40, accent: "#f1b45a" },
   { id: "bird", eyebrow: "02 · 飛鳥", title: "掠過濕地的飛鳥", brief: "凝結翅膀，並以長焦填滿畫面。", lesson: "高速移動主體需要更快快門，通常也要提高 ISO。", sceneEv: 13.2, speed: 9, focal: [200, 300], aperture: [4, 8], minShutter: 1 / 1000, accent: "#9bc9d8" },
@@ -72,18 +88,236 @@ const SCENARIOS: Scenario[] = [
   { id: "airport", eyebrow: "10 · 機場飛機起降", title: "跑道上的鋼鐵巨鳥", brief: "在機場遠處以超長焦鎖定客機高速起降與拉起瞬間。", lesson: "高速運動的大型飛機需要 1/1000 秒以上高速快門凝結機身與氣流，搭配超遠攝鏡頭追焦。", sceneEv: 13.6, speed: 18, focal: [200, 600], aperture: [5.6, 8], minShutter: 1 / 1000, accent: "#fb923c" },
   { id: "outdoor_portrait", eyebrow: "11 · 室外人像", title: "陽光花園戶外人像", brief: "在戶外自然光與樹蔭花景中，拍出柔美背景虛化的人像特寫。", lesson: "戶外人像善用大光圈分離人物與繁雜背景，注意臉部受光與曝光補償避免逆光暗臉。", sceneEv: 12.2, speed: 0.2, focal: [50, 85], aperture: [1.4, 2.8], minShutter: 1 / 250, accent: "#ec4899" },
 ];
-const APERTURES = [1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22];
+const APERTURES = [1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22, 25, 29, 32];
 const SHUTTERS = [1 / 32000, 1 / 25000, 1 / 20000, 1 / 16000, 1 / 12500, 1 / 10000, 1 / 8000, 1 / 6400, 1 / 5000, 1 / 4000, 1 / 3200, 1 / 2500, 1 / 2000, 1 / 1600, 1 / 1250, 1 / 1000, 1 / 800, 1 / 640, 1 / 500, 1 / 400, 1 / 320, 1 / 250, 1 / 200, 1 / 160, 1 / 125, 1 / 100, 1 / 80, 1 / 60, 1 / 50, 1 / 40, 1 / 30, 1 / 25, 1 / 20, 1 / 15, 1 / 13, 1 / 10, 1 / 8, 1 / 6, 1 / 5, 1 / 4, .3, .4, .5, .6, .8, 1, 1.3, 1.6, 2, 2.5, 3.2, 4, 5, 6, 8, 10, 13, 15, 20, 25, 30];
 const SHUTTER_SCALE_OPTIONS = [...SHUTTERS].reverse();
 const ISOS = [50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800, 16000, 20000, 25600, 32000, 40000, 51200, 64000, 80000, 102400];
 const ISO_AUTO_SCALE_VALUE = 999999;
 const ISO_SCALE_OPTIONS = [ISO_AUTO_SCALE_VALUE, ...ISOS];
 const EXPOSURE_COMPENSATIONS = [-3, -2.7, -2.3, -2, -1.7, -1.3, -1, -0.7, -0.3, 0, 0.3, 0.7, 1, 1.3, 1.7, 2, 2.3, 2.7, 3];
-const LENSES = [
-  { id: "standard", name: "24–70 mm F2.8 標準變焦", focals: [24, 28, 35, 50, 70], maxAperture: () => 2.8 },
-  { id: "portrait", name: "70–200 mm F2.8 遠攝變焦", focals: [70, 85, 100, 135, 200], maxAperture: () => 2.8 },
-  { id: "tele", name: "200–600 mm F5.6–6.3 超遠攝變焦", focals: [200, 300, 400, 500, 600], maxAperture: (focal: number) => focal > 300 ? 6.3 : 5.6 },
-  { id: "wildlife", name: "400–800 mm F6.3–8.0 超遠攝變焦", focals: [400, 500, 600, 800], maxAperture: (focal: number) => focal > 600 ? 8.0 : 6.3 },
+
+export type LensCategory = "zoom" | "prime";
+export interface LensSpec {
+  id: string;
+  name: string;
+  category: LensCategory;
+  focals: number[];
+  maxAperture: (focal: number) => number;
+  minAperture: number;
+  filter: string;
+  weight: string;
+  tag: string;
+  desc: string;
+}
+
+const LENSES: LensSpec[] = [
+  // ── 變焦鏡頭群 (ZOOM LENSES) ──
+  {
+    id: "zoom_12_24_f28",
+    name: "12–24 mm F2.8 旗艦超廣角變焦",
+    category: "zoom",
+    focals: [12, 14, 16, 18, 20, 24],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "後置濾鏡",
+    weight: "847 g",
+    tag: "旗艦超廣角大三元",
+    desc: "12mm 極致視角與恆定 F2.8 大光圈，壯闊大景與星空銀河首選。",
+  },
+  {
+    id: "zoom_16_35_f28_ii",
+    name: "16–35 mm F2.8 II 旗艦廣角變焦",
+    category: "zoom",
+    focals: [16, 20, 24, 28, 35],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "82 mm",
+    weight: "547 g",
+    tag: "二代廣角大三元",
+    desc: "二代輕量化廣角大三元，邊角解析度極致銳利，適合風景、建築與街拍。",
+  },
+  {
+    id: "standard",
+    name: "24–70 mm F2.8 II 旗艦標準變焦",
+    category: "zoom",
+    focals: [24, 28, 35, 50, 70],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "82 mm",
+    weight: "695 g",
+    tag: "二代標準鏡皇",
+    desc: "全能標準鏡皇二代，解像力極高、近拍優異且散景柔美，全方位拍攝首選。",
+  },
+  {
+    id: "zoom_28_70_f2",
+    name: "28–70 mm F2.0 旗艦大光圈標準變焦",
+    category: "zoom",
+    focals: [28, 35, 40, 50, 70],
+    maxAperture: () => 2.0,
+    minAperture: 22,
+    filter: "86 mm",
+    weight: "918 g",
+    tag: "F2 恆定超大光圈變焦",
+    desc: "劃時代 F2.0 恆定超大光圈變焦，兼具多支頂級定焦鏡的畫質與迷人散景。",
+  },
+  {
+    id: "portrait",
+    name: "70–200 mm F2.8 II 防手震遠攝變焦",
+    category: "zoom",
+    focals: [70, 85, 100, 135, 200],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "77 mm",
+    weight: "1045 g",
+    tag: "二代望遠鏡皇",
+    desc: "大幅減重 29% 的望遠鏡皇二代，疾速追焦與內建光學防手震，人像與運動利器。",
+  },
+  {
+    id: "zoom_100_400_f45_56",
+    name: "100–400 mm F4.5–5.6 防手震超遠攝變焦",
+    category: "zoom",
+    focals: [100, 135, 200, 300, 400],
+    maxAperture: (f: number) => f <= 100 ? 4.5 : f <= 200 ? 5.0 : 5.6,
+    minAperture: 32,
+    filter: "77 mm",
+    weight: "1395 g",
+    tag: "超遠攝防手震變焦",
+    desc: "專業超遠攝變焦鏡頭，具備光學防手震與高速精準對焦，運動賽事與飛羽首選。",
+  },
+
+  // ── 定焦鏡頭群 (PRIME LENSES) ──
+  {
+    id: "prime_14_f18",
+    name: "14 mm F1.8 超廣角星空定焦",
+    category: "prime",
+    focals: [14],
+    maxAperture: () => 1.8,
+    minAperture: 16,
+    filter: "後置濾鏡",
+    weight: "460 g",
+    tag: "超廣角星空神器",
+    desc: "14mm 超廣角與 F1.8 大光圈，極致抑制彗形像差，星空銀河與壯闊夜景首選。",
+  },
+  {
+    id: "prime_24_f14",
+    name: "24 mm F1.4 廣角大光圈風景定焦",
+    category: "prime",
+    focals: [24],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "67 mm",
+    weight: "445 g",
+    tag: "廣角大光圈定焦",
+    desc: "輕巧緊湊的高畫質廣角定焦，F1.4 大光圈與柔美散景，風景與夜景創作利器。",
+  },
+  {
+    id: "prime_35_f14",
+    name: "35 mm F1.4 人文紀實街拍定焦",
+    category: "prime",
+    focals: [35],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "67 mm",
+    weight: "524 g",
+    tag: "人文街拍之王",
+    desc: "攝影師最喜愛的人文黃金焦段，邊角極致解像力與純淨散景，街拍紀實首選。",
+  },
+  {
+    id: "prime_50_f12",
+    name: "50 mm F1.2 頂級旗艦大光圈定焦",
+    category: "prime",
+    focals: [50],
+    maxAperture: () => 1.2,
+    minAperture: 16,
+    filter: "72 mm",
+    weight: "778 g",
+    tag: "F1.2 夢幻散景定焦",
+    desc: "頂級 F1.2 超大光圈，極淺景深營造出如奶油般融化的極致夢幻散景。",
+  },
+  {
+    id: "prime_50_f14",
+    name: "50 mm F1.4 高解像標準定焦",
+    category: "prime",
+    focals: [50],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "67 mm",
+    weight: "516 g",
+    tag: "高解像標準定焦",
+    desc: "新世代高解析 F1.4 標準鏡頭，鏡身小巧輕盈，提供飛快而安靜的精準對焦。",
+  },
+  {
+    id: "prime_85_f14_ii",
+    name: "85 mm F1.4 II 專業人像鏡皇",
+    category: "prime",
+    focals: [85],
+    maxAperture: () => 1.4,
+    minAperture: 16,
+    filter: "77 mm",
+    weight: "642 g",
+    tag: "二代人像鏡皇",
+    desc: "新一代專業人像鏡皇，畫質與散景全面進化，減重 20%，追焦反應躍升 3 倍。",
+  },
+  {
+    id: "prime_100_f28_apd",
+    name: "100 mm F2.8 APD 柔焦人像定焦",
+    category: "prime",
+    focals: [100],
+    maxAperture: () => 2.8,
+    minAperture: 20,
+    filter: "72 mm",
+    weight: "700 g",
+    tag: "APD 柔焦人像定焦",
+    desc: "搭載 APD 變跡濾鏡的特殊散景鏡頭 (T5.6 光度)，消弭二線性，呈現絲滑柔焦。",
+  },
+  {
+    id: "prime_135_f18",
+    name: "135 mm F1.8 空氣切割機人像定焦",
+    category: "prime",
+    focals: [135],
+    maxAperture: () => 1.8,
+    minAperture: 22,
+    filter: "82 mm",
+    weight: "950 g",
+    tag: "空氣切割機定焦",
+    desc: "頂級人像「空氣切割機」，強烈空間壓縮感與刀鋒般的全開光圈極致銳度。",
+  },
+  {
+    id: "prime_300_f28",
+    name: "300 mm F2.8 輕量遠攝大砲",
+    category: "prime",
+    focals: [300],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "40.5 mm 插入式",
+    weight: "1470 g",
+    tag: "最輕量遠攝大砲",
+    desc: "同級最輕 300mm F2.8 遠攝大光圈巨砲，重心優異，室內運動與生態機動首選。",
+  },
+  {
+    id: "prime_400_f28",
+    name: "400 mm F2.8 體育賽事旗艦大砲",
+    category: "prime",
+    focals: [400],
+    maxAperture: () => 2.8,
+    minAperture: 22,
+    filter: "40.5 mm 插入式",
+    weight: "2895 g",
+    tag: "體育賽事旗艦大砲",
+    desc: "體育賽事與生態攝影旗艦大砲，F2.8 超大通光量瞬間凝結高速動作。",
+  },
+  {
+    id: "prime_600_f4",
+    name: "600 mm F4.0 飛羽生態終極巨砲",
+    category: "prime",
+    focals: [600],
+    maxAperture: () => 4.0,
+    minAperture: 22,
+    filter: "40.5 mm 插入式",
+    weight: "3040 g",
+    tag: "飛羽生態終極巨砲",
+    desc: "頂級野生飛羽與航空攝影終極巨砲，超長焦距呈現羽毛與機身毫釐細節。",
+  },
 ];
 const MODES: { key: Mode; label: string; name: string }[] = [
   { key: "AUTO", label: "AUTO", name: "全自動" },
@@ -159,24 +393,8 @@ function Control({ label, value, helper, index, max, disabled = false, onChange 
   return <section className={`control ${disabled ? "disabled" : ""}`}><div className="control-label"><label>{label}</label><strong>{value}</strong></div><input aria-label={label} type="range" min="0" max={max} step="1" value={Math.max(0, index)} disabled={disabled} onChange={e => onChange(Number(e.target.value))} /><div className="ticks"><i /><i /><i /><i /><i /></div>{helper && <small>{helper}</small>}</section>;
 }
 
-function BlobPhoto({ blob, alt }: { blob: Blob; alt: string }) {
-  const imageRef = useRef<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    const image = imageRef.current;
-    if (!image) return;
-    const url = URL.createObjectURL(blob);
-    image.src = url;
-    return () => URL.revokeObjectURL(url);
-  }, [blob]);
-
-  // The image is a local capture Blob, so framework URL optimization cannot handle it.
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img ref={imageRef} className="playback-photo" alt={alt} />;
-}
-
 export default function Home() {
-  const [sceneIndex, setSceneIndex] = useState(0), [mode, setMode] = useState<Mode>("P"), [driveMode, setDriveMode] = useState<DriveMode>("single"), [aperture, setAperture] = useState(5.6), [shutter, setShutter] = useState(1 / 125), [iso, setIso] = useState(200), [isoAuto, setIsoAuto] = useState(true), [focal, setFocal] = useState(50), [meteringMode, setMeteringMode] = useState<MeteringMode>("multi"), [exposureComp, setExposureComp] = useState(0), [captured, setCaptured] = useState(false), [lensId, setLensId] = useState("standard"), [look, setLook] = useState<Look>({ yaw: 0, pitch: 0 }), [mobileControl, setMobileControl] = useState<MobileControl>("shutter"), [isFullscreen, setIsFullscreen] = useState(false), [fullscreenError, setFullscreenError] = useState<string | null>(null), [hudVisible, setHudVisible] = useState(true), [deckOpen, setDeckOpen] = useState(false), [started, setStarted] = useState(false);
+  const [sceneIndex, setSceneIndex] = useState(0), [mode, setMode] = useState<Mode>("P"), [driveMode, setDriveMode] = useState<DriveMode>("single"), [aperture, setAperture] = useState(5.6), [shutter, setShutter] = useState(1 / 125), [iso, setIso] = useState(200), [isoAuto, setIsoAuto] = useState(true), [focal, setFocal] = useState(50), [meteringMode, setMeteringMode] = useState<MeteringMode>("multi"), [exposureComp, setExposureComp] = useState(0), [captured, setCaptured] = useState(false), [lensId, setLensId] = useState("standard"), [mobileControl, setMobileControl] = useState<MobileControl>("shutter"), [isFullscreen, setIsFullscreen] = useState(false), [fullscreenError, setFullscreenError] = useState<string | null>(null), [hudVisible, setHudVisible] = useState(true), [deckOpen, setDeckOpen] = useState(false), [started, setStarted] = useState(false), [launching, setLaunching] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false), [driveMenuOpen, setDriveMenuOpen] = useState(false);
   const [exposureState, setExposureState] = useState<ExposureState | null>(null);
   const [aiming, setAiming] = useState(false), [focusRead, setFocusRead] = useState<FocusReading | null>(null), [afFrameSize, setAfFrameSize] = useState<AfFrameSize>("small");
@@ -199,15 +417,28 @@ export default function Home() {
   const burstTimerRef = useRef<number | null>(null);
   const exposureTimerRef = useRef<number | null>(null);
   const exposureStateRef = useRef<ExposureState | null>(null);
+  // View movement is renderer state, not HUD state. Keeping it in a ref avoids
+  // reconciling the complete camera interface on every 120 Hz pointer frame.
+  const lookRef = useRef<Look>({ yaw: 0, pitch: 0 });
   const lookFrameRef = useRef<number | null>(null);
   const pointerDragRef = useRef<{ startX: number; startY: number; yaw: number; pitch: number; moved: boolean } | null>(null);
   const confirmingControlRef = useRef(false);
   const lookDeltaRef = useRef({ x: 0, y: 0 });
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<ViewportHandle | null>(null);
-  const [result, setResult] = useState<Result | null>(null), [libraryOpen, setLibraryOpen] = useState(false), [activeControl, setActiveControl] = useState<MobileControl | null>(null);
+  const applyLook = useCallback((nextLook: Look) => {
+    const exposure = exposureStateRef.current;
+    if (exposure && exposure.trajectory.length < 300) {
+      // Repeated points preserve the time spent holding a pan at its limit.
+      exposure.trajectory.push({ yaw: nextLook.yaw, pitch: nextLook.pitch });
+    }
+    const previous = lookRef.current;
+    if (previous.yaw === nextLook.yaw && previous.pitch === nextLook.pitch) return;
+    lookRef.current = nextLook;
+    viewportRef.current?.setLook(nextLook);
+  }, []);
+  const [libraryOpen, setLibraryOpen] = useState(false), [activeControl, setActiveControl] = useState<MobileControl | null>(null);
   const [shots, setShots] = useState<Photo[]>([]);
-  const availableShots = shots;
   // The card holds both what's already written (shots) and what's still queued to write.
   const cardRemaining = CARD_CAPACITY - shots.length - bufferCount;
   const cardFull = cardRemaining <= 0;
@@ -215,7 +446,8 @@ export default function Home() {
   const lens = LENSES.find(item => item.id === lensId) ?? LENSES[0];
   const shutterOptions = SHUTTERS;
   const lensMaxAperture = lens.maxAperture(focal);
-  const apertureOptions = useMemo(() => APERTURES.filter(value => value >= lensMaxAperture), [lensMaxAperture]);
+  const lensMinAperture = lens.minAperture ?? 22;
+  const apertureOptions = useMemo(() => APERTURES.filter(value => value >= lensMaxAperture && value <= lensMinAperture), [lensMaxAperture, lensMinAperture]);
   const meteringBias = meteringMode === "highlight" ? .70 : meteringMode === "spot" ? (scene.id === "night" || scene.id === "starry" || scene.id === "city_night" ? -.60 : -.15) : meteringMode === "center" ? -.10 : meteringMode === "average" ? .15 : 0;
   const usingAutoIso = mode === "AUTO" || isoAuto;
 
@@ -361,7 +593,7 @@ export default function Home() {
   }, []);
 
   const capture = useCallback(() => {
-    if (exposureStateRef.current || libraryOpen || result || !started) return;
+    if (exposureStateRef.current || libraryOpen || !started) return;
     if (reservedFramesRef.current >= CARD_CAPACITY) return;
     if (bufferDecayRef.current >= MAX_BUFFER) return;
 
@@ -377,9 +609,7 @@ export default function Home() {
       });
       if (!render) return;
 
-      const motionSpread = (trajectory.length > 1
-        ? Math.hypot(trajectory[trajectory.length - 1].yaw - trajectory[0].yaw, trajectory[trajectory.length - 1].pitch - trajectory[0].pitch)
-        : 0) / Math.max(0.01, horizontalFieldOfView(focal)) * 80;
+      const motionSpread = trajectoryDistance(trajectory) / Math.max(0.01, horizontalFieldOfView(focal)) * 80;
       const combinedMotionBlur = clamp(motionBlur + motionSpread, 0, 16);
       const measuredBlurPlan = depthBlurPlan(scene.id, { focalMm: focal, fNumber: effective.aperture, imageWidthPx: CAPTURE_REFERENCE_WIDTH, focusM: render.focusM, subjectM: render.subjectM });
       const measuredFocusBlur = measuredBlurPlan.subject;
@@ -433,7 +663,7 @@ export default function Home() {
           syncBufferCount();
           return;
         }
-        const photo: Photo = { id, scene: scene.id, score: totalScore, title, settings, image, thumb: render.thumb, params };
+        const photo: Photo = { id, scene: scene.id, score: totalScore, title, settings, width: render.width, height: render.height, image, thumb: render.thumb, params };
         pendingRef.current.push(photo);
         syncBufferCount();
         scheduleBufferDrain();
@@ -444,10 +674,12 @@ export default function Home() {
 
     const shutterSec = effective.shutter;
     if (shutterSec < 0.2) {
+      const look = lookRef.current;
       finalizeCapture([{ yaw: look.yaw, pitch: look.pitch }]);
       return;
     }
 
+    const look = lookRef.current;
     const state: ExposureState = {
       startTime: performance.now(),
       durationSeconds: shutterSec,
@@ -481,7 +713,7 @@ export default function Home() {
       }
     };
     exposureTimerRef.current = window.requestAnimationFrame(step);
-  }, [brightness, cameraBlur, driveMode, effective.aperture, effective.iso, effective.shutter, exposureComp, exposureDelta, focal, lens.name, libraryOpen, look.pitch, look.yaw, mode, motionBlur, noise, result, scene, scheduleBufferDrain, started, subjectBlur, syncBufferCount, usingAutoIso]);
+  }, [brightness, cameraBlur, driveMode, effective.aperture, effective.iso, effective.shutter, exposureComp, exposureDelta, focal, lens.name, libraryOpen, mode, motionBlur, noise, scene, scheduleBufferDrain, started, subjectBlur, syncBufferCount, usingAutoIso]);
 
   // A burst reschedules itself through setTimeout, so its closure would keep firing
   // the capture from the instant the burst began — same framing, same exposure, 95 times.
@@ -498,7 +730,7 @@ export default function Home() {
   }, []);
 
   const startBurst = useCallback(() => {
-    if (exposureStateRef.current || libraryOpen || result || !started) return;
+    if (exposureStateRef.current || libraryOpen || !started) return;
     if (reservedFramesRef.current >= CARD_CAPACITY) return;
 
     isBurstTriggerActiveRef.current = true;
@@ -520,52 +752,15 @@ export default function Home() {
     };
 
     burstTimerRef.current = window.setTimeout(triggerNext, driveOpt.interval);
-  }, [driveMode, libraryOpen, result, started, stopBurst]);
+  }, [driveMode, libraryOpen, started, stopBurst]);
 
-  const showPhoto = useCallback((photo: Photo) => {
-    setResult({
-      photoId: photo.id,
-      score: photo.score,
-      title: "相片檢視",
-      notes: [photo.settings],
-      scene: photo.scene,
-      params: photo.params,
+  const deletePhoto = useCallback((id: number) => {
+    setShots(previous => {
+      if (!previous.some(photo => photo.id === id)) return previous;
+      reservedFramesRef.current = Math.max(0, reservedFramesRef.current - 1);
+      return previous.filter(photo => photo.id !== id);
     });
   }, []);
-
-  const viewedBlob = result ? availableShots.find(photo => photo.id === result.photoId)?.image : undefined;
-
-  const stepPhoto = useCallback((offset: number) => {
-    if (!availableShots.length) return;
-    const currentIndex = availableShots.findIndex(p => p.id === result?.photoId);
-    const safeCurrent = Math.max(0, currentIndex);
-    const nextIndex = (safeCurrent + offset + availableShots.length) % availableShots.length;
-    showPhoto(availableShots[nextIndex]);
-  }, [availableShots, result?.photoId, showPhoto]);
-
-  const deletePhoto = useCallback((id: number, event?: React.MouseEvent) => {
-    if (event) {
-      event.stopPropagation();
-      event.preventDefault();
-    }
-    if (availableShots.some(photo => photo.id === id)) reservedFramesRef.current = Math.max(0, reservedFramesRef.current - 1);
-    setShots(prev => prev.filter(p => p.id !== id));
-    setResult(current => {
-      if (!current || current.photoId !== id) return current;
-      const remaining = availableShots.filter(p => p.id !== id);
-      if (remaining.length === 0) return null;
-      const currentIndex = availableShots.findIndex(p => p.id === id);
-      const nextPhoto = remaining[Math.min(currentIndex, remaining.length - 1)];
-      return {
-        photoId: nextPhoto.id,
-        score: nextPhoto.score,
-        title: "相片檢視",
-        notes: [nextPhoto.settings],
-        scene: nextPhoto.scene,
-        params: nextPhoto.params,
-      };
-    });
-  }, [availableShots]);
 
   const clearLibrary = useCallback(() => {
     captureGenerationRef.current += 1;
@@ -579,41 +774,41 @@ export default function Home() {
     }
     setBufferCount(0);
     setShots([]);
-    setResult(null);
   }, []);
 
   const closeLibrary = useCallback(() => {
-    setResult(null);
     setLibraryOpen(false);
+  }, []);
+
+  const openLibrary = useCallback(() => {
+    if (document.pointerLockElement) document.exitPointerLock();
+    setActiveControl(null);
+    void loadPhotoLibrary();
+    setLibraryOpen(true);
   }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      const target = e.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
+      // Space/Enter belong to the focused control. Without this guard, pressing
+      // a start-screen or HUD button also fired the global shutter shortcut and
+      // could unmount the fullscreen button before its native click occurred.
+      if ((e.code === "Space" || e.code === "Enter") && target instanceof Element && target !== stageRef.current && target.closest('button,[role="button"],[role="menuitemradio"]')) return;
 
       if (!started) {
-        if (e.code === "Space" || e.code === "Enter") {
+        if (!launching && (e.code === "Space" || e.code === "Enter")) {
           e.preventDefault();
-          setStarted(true);
+          setLaunching(true);
+          void warmCameraExperience().then(
+            () => { setStarted(true); setLaunching(false); },
+            () => setLaunching(false),
+          );
         }
         return;
       }
 
       if (libraryOpen) {
-        if (e.code === "Escape") {
-          e.preventDefault();
-          if (result) setResult(null);
-          else closeLibrary();
-        } else if (result && e.code === "ArrowLeft") {
-          e.preventDefault();
-          stepPhoto(-1);
-        } else if (result && e.code === "ArrowRight") {
-          e.preventDefault();
-          stepPhoto(1);
-        } else if (result && (e.code === "Delete" || e.code === "Backspace")) {
-          e.preventDefault();
-          deletePhoto(result.photoId);
-        }
         return;
       }
 
@@ -633,7 +828,14 @@ export default function Home() {
       else if (e.code === "KeyF") { e.preventDefault(); toggleFullscreen(); }
       else if (e.code === "KeyH") { e.preventDefault(); setHudVisible(v => !v); }
       else if (e.code === "KeyP") { e.preventDefault(); setDeckOpen(v => !v); }
-      else if (e.code === "KeyG") { e.preventDefault(); if (document.pointerLockElement) document.exitPointerLock(); setResult(null); setLibraryOpen(true); }
+      else if (e.code === "KeyG") { e.preventDefault(); openLibrary(); }
+      else if (e.code === "Escape") {
+        if (document.pointerLockElement) document.exitPointerLock();
+        setModeMenuOpen(false);
+        setDriveMenuOpen(false);
+        setActiveControl(null);
+        setDeckOpen(false);
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
@@ -647,7 +849,7 @@ export default function Home() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [closeLibrary, deletePhoto, libraryOpen, result, startBurst, started, stepPhoto, stopBurst, toggleFullscreen]);
+  }, [launching, libraryOpen, openLibrary, startBurst, started, stopBurst, toggleFullscreen]);
 
   useEffect(() => {
     if (!isBursting) return;
@@ -680,24 +882,17 @@ export default function Home() {
           lookDeltaRef.current = { x: 0, y: 0 };
           const degreesPerPixel = horizontalFieldOfView(focal) / Math.max(1, stageRef.current?.clientWidth ?? window.innerWidth);
           const limits = LOOK_LIMITS[scene.id] ?? LOOK_LIMITS.landscape;
-          setLook(prev => {
-            const nextLook = {
-              yaw: clamp(prev.yaw - delta.x * degreesPerPixel, -limits.yaw, limits.yaw),
-              pitch: clamp(prev.pitch - delta.y * degreesPerPixel, -limits.pitchDown, limits.pitchUp),
-            };
-            if (exposureStateRef.current && exposureStateRef.current.trajectory.length < 300) {
-              exposureStateRef.current.trajectory.push({ yaw: nextLook.yaw, pitch: nextLook.pitch });
-            }
-            // Held against a look limit the clamp returns the same angles frame
-            // after frame; keeping the previous object lets React skip the render.
-            return prev.yaw === nextLook.yaw && prev.pitch === nextLook.pitch ? prev : nextLook;
+          const previous = lookRef.current;
+          applyLook({
+            yaw: clamp(previous.yaw - delta.x * degreesPerPixel, -limits.yaw, limits.yaw),
+            pitch: clamp(previous.pitch - delta.y * degreesPerPixel, -limits.pitchDown, limits.pitchUp),
           });
         });
       }
     };
     window.addEventListener("mousemove", onMove);
     return () => { window.removeEventListener("mousemove", onMove); if (lookFrameRef.current) window.cancelAnimationFrame(lookFrameRef.current); lookFrameRef.current = 0; lookDeltaRef.current = { x: 0, y: 0 }; };
-  }, [aiming, focal, scene.id]);
+  }, [aiming, applyLook, focal, scene.id]);
 
   const requestAim = useCallback(() => {
     const stage = stageRef.current;
@@ -707,10 +902,15 @@ export default function Home() {
   }, []);
 
   const enterGame = useCallback((fullscreen: boolean) => {
-    setStarted(true);
+    if (launching) return;
+    setLaunching(true);
+    void warmCameraExperience().then(
+      () => { setStarted(true); setLaunching(false); },
+      () => setLaunching(false),
+    );
     if (fullscreen) toggleFullscreen().finally(() => requestAim());
     else requestAim();
-  }, [requestAim, toggleFullscreen]);
+  }, [launching, requestAim, toggleFullscreen]);
 
   const selectScene = (idx: number) => {
     if (exposureTimerRef.current) {
@@ -720,14 +920,14 @@ export default function Home() {
     exposureStateRef.current = null;
     setExposureState(null);
     setSceneIndex(idx);
-    setLook({ yaw: 0, pitch: 0 });
-    setResult(null);
+    lookRef.current = { yaw: 0, pitch: 0 };
+    viewportRef.current?.setLook(lookRef.current);
     setFocusRead(null);
     setLightEv(0);
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (result) return;
+    if (libraryOpen) return;
     if (event.pointerType === "mouse") {
       if (!aiming) {
         if (requestAim()) return;
@@ -740,8 +940,8 @@ export default function Home() {
     pointerDragRef.current = {
       startX: event.clientX,
       startY: event.clientY,
-      yaw: look.yaw,
-      pitch: look.pitch,
+      yaw: lookRef.current.yaw,
+      pitch: lookRef.current.pitch,
       moved: false,
     };
   };
@@ -759,22 +959,17 @@ export default function Home() {
       yaw: clamp(drag.yaw + deltaX * degreesPerPixel, -limits.yaw, limits.yaw),
       pitch: clamp(drag.pitch + deltaY * degreesPerPixel, -limits.pitchDown, limits.pitchUp),
     };
-    if (exposureStateRef.current && exposureStateRef.current.trajectory.length < 300) {
-      exposureStateRef.current.trajectory.push({ yaw: nextLook.yaw, pitch: nextLook.pitch });
-    }
-    setLook(prev => prev.yaw === nextLook.yaw && prev.pitch === nextLook.pitch ? prev : nextLook);
+    applyLook(nextLook);
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse") {
       stopBurst();
-      if (result) setResult(null);
       return;
     }
     const drag = pointerDragRef.current;
     pointerDragRef.current = null;
     if (drag?.moved) return;
-    if (result) { setResult(null); return; }
     // Touch input only turns the camera. The dedicated shutter remains the only
     // capture target, avoiding accidental photos while the player is aiming.
   };
@@ -797,7 +992,17 @@ export default function Home() {
   const activeRawValue = activeControl === "shutter" ? shutter : activeControl === "aperture" ? aperture : activeControl === "iso" ? usingAutoIso ? ISO_AUTO_SCALE_VALUE : iso : exposureComp;
   const activeIndex = Math.max(0, activeOptions.indexOf(activeRawValue));
   const visibleScaleValues = activeControl
-    ? Array.from({ length: 9 }, (_, offset) => ({ index: clamp(activeIndex + offset - 4, 0, activeOptions.length - 1), position: offset * 12.5 })).filter((item, index, list) => list.findIndex(candidate => candidate.index === item.index) === index)
+    // Nine slots centred on the selected stop. Ticks are centred on their own
+    // position and the track clips its overflow, so the outermost slots are
+    // inset rather than sitting on 0 % and 100 % — the same margin the focal
+    // scale keeps. Slot 4 lands on 50 %, under the fixed pointer.
+    //
+    // Slots past either end of the range are dropped, not clamped: this is a
+    // dial that slides under a stationary pointer, so reaching the end of the
+    // travel must run the ticks out and leave that side blank. Clamping instead
+    // collapsed them onto the end stop and dragged the selected value away from
+    // the pointer it is supposed to sit under.
+    ? Array.from({ length: 9 }, (_, offset) => ({ index: activeIndex + offset - 4, position: 6 + offset * 11 })).filter(item => item.index >= 0 && item.index < activeOptions.length)
     : [];
   const activeLabel = activeControl === "shutter" ? "快門" : activeControl === "aperture" ? "光圈" : activeControl === "iso" ? "ISO" : "曝光值";
   const formatControlValue = (control: MobileControl | null, value: number) => control === "shutter" ? shutterLabel(value) : control === "aperture" ? `F${value}` : control === "iso" ? value === ISO_AUTO_SCALE_VALUE ? "AUTO" : `${value}` : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
@@ -840,12 +1045,19 @@ export default function Home() {
       }
     }}
   >
+    {started && <CameraStyles />}
     <div
       ref={stageRef}
       className={`live-stage ${aiming ? "aiming" : ""} ${exposureState ? "exposing" : ""}`}
       role="button"
       tabIndex={0}
       aria-label="取景器；對焦框固定在正中央；滑鼠移動視角、點擊拍攝、滾輪變焦；觸控拖曳移動視角"
+      onKeyDown={event => {
+        if (event.key !== "Enter" || event.repeat) return;
+        event.preventDefault();
+        startBurst();
+        window.setTimeout(stopBurst, 0);
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -856,12 +1068,14 @@ export default function Home() {
         setFocal(lens.focals[nextIndex]);
       }}
     >
-      <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} yaw={look.yaw} pitch={look.pitch} aimX={0} aimY={0} frozen={!started || Boolean(result) || libraryOpen} onFocus={setFocusRead} onLight={onLightReading} />
+      {started
+        ? <Viewport3D ref={viewportRef} scene={scene.id} focal={focal} aimX={0} aimY={0} frozen={libraryOpen} brightness={brightness} noise={noise} onFocus={setFocusRead} onLight={onLightReading} />
+        : <div className="viewport-stage" aria-hidden="true" />}
       <div className="viewfinder-shade" />
       <div className="grid-lines"><i /><i /><i /><i /></div>
 
       {exposureState && (
-        <div className="exposure-countdown-hud glass" role="status" aria-live="polite" aria-label={`長曝光進行中，剩餘 ${exposureState.remainingSeconds.toFixed(1)} 秒`}>
+        <div className="exposure-countdown-hud glass" role="timer" aria-label={`長曝光進行中，剩餘 ${Math.ceil(exposureState.remainingSeconds)} 秒`}>
           <div className="countdown-status-row">
             <span className="countdown-badge"><i className="rec-dot" /> 曝光中 EXPOSING</span>
             <span className="countdown-target">/ {shutterLabel(exposureState.durationSeconds)}</span>
@@ -882,7 +1096,7 @@ export default function Home() {
         </div>
       )}
 
-      {started && !result && !exposureState && (
+      {started && !libraryOpen && !exposureState && (
         <div className={`af-frame af-size-${afFrameSize} ${isSharp ? "sharp" : ""} ${aiming ? "aiming" : ""}`} aria-hidden="true">
           <i /><i /><i /><i />
           <em>{formatFocusDistance(focusM)}</em>
@@ -891,7 +1105,7 @@ export default function Home() {
       <div className="flash" />
     </div>
 
-    <div className="hud">
+    {started && <div className="hud">
       <header className="hud-top">
         <div className="hud-top-left hud-fade">
           <div className="scene-row">
@@ -900,7 +1114,7 @@ export default function Home() {
               <h1>{scene.title}</h1>
             </div>
             {started && (
-              <div className={`card-gauge ${cardFull ? "full" : cardRemaining <= CARD_CAPACITY * 0.1 ? "low" : ""}`} role="status" aria-label={cardFull ? "記憶卡已滿，無法拍攝" : `記憶卡剩餘 ${cardRemaining} 張`}>
+              <div className={`card-gauge ${cardFull ? "full" : cardRemaining <= CARD_CAPACITY * 0.1 ? "low" : ""}`} role="meter" aria-valuemin={0} aria-valuemax={CARD_CAPACITY} aria-valuenow={Math.max(0, cardRemaining)} aria-label={cardFull ? "記憶卡已滿，無法拍攝" : `記憶卡剩餘 ${cardRemaining} 張`}>
                 <span className="card-gauge-slot" aria-hidden="true"><i /><i /><i /></span>
                 <b>{cardFull ? "FULL" : cardRemaining}</b>
               </div>
@@ -919,6 +1133,7 @@ export default function Home() {
                 title={`拍攝模式：${MODES.find(m => m.key === mode)?.label}（${MODES.find(m => m.key === mode)?.name}）`}
                 aria-label={`拍攝模式：${mode}`}
                 aria-expanded={modeMenuOpen}
+                aria-haspopup="menu"
               >
                 <span className="mode-glyph">{mode}</span>
               </button>
@@ -929,6 +1144,8 @@ export default function Home() {
                     <button
                       key={item.key}
                       type="button"
+                      role="menuitemradio"
+                      aria-checked={mode === item.key}
                       onClick={e => {
                         e.stopPropagation();
                         setMode(item.key);
@@ -958,6 +1175,7 @@ export default function Home() {
                 title={`過片模式：${DRIVE_MODES.find(d => d.key === driveMode)?.title}`}
                 aria-label={`過片模式：${driveMode}`}
                 aria-expanded={driveMenuOpen}
+                aria-haspopup="menu"
               >
                 <span className="drive-icon-wrap" aria-hidden="true"><DriveIcon drive={driveMode} /></span>
               </button>
@@ -968,6 +1186,8 @@ export default function Home() {
                     <button
                       key={item.key}
                       type="button"
+                      role="menuitemradio"
+                      aria-checked={driveMode === item.key}
                       onClick={e => {
                         e.stopPropagation();
                         setDriveMode(item.key);
@@ -985,7 +1205,7 @@ export default function Home() {
             </div>
           </div>
           {started && (driveMode !== "single" || bufferCount > 0) && (
-            <div className={`buffer-gauge ${bufferCount > 0 ? "active" : ""} ${bufferCount >= MAX_BUFFER ? "full" : ""}`} role="status" aria-label={`緩衝記憶體：${bufferCount} / ${MAX_BUFFER} 張`}>
+            <div className={`buffer-gauge ${bufferCount > 0 ? "active" : ""} ${bufferCount >= MAX_BUFFER ? "full" : ""}`} role="meter" aria-valuemin={0} aria-valuemax={MAX_BUFFER} aria-valuenow={bufferCount} aria-label={`緩衝記憶體：${bufferCount} / ${MAX_BUFFER} 張`}>
               <b>{MAX_BUFFER - bufferCount}</b>
               <span className="buffer-segments" aria-hidden="true">
                 {BUFFER_SEGMENT_INDICES.map(index => (
@@ -1000,7 +1220,7 @@ export default function Home() {
           <div className="focal-scale" aria-label="焦段刻度，使用滾輪調整">
             <div className="scale-heading">
               <b>{focal} mm</b>
-              <small>視角 {horizontalFieldOfView(focal).toFixed(1)}°</small>
+              <small>{lens.category === "prime" ? "定焦鏡 · " : ""}視角 {horizontalFieldOfView(focal).toFixed(1)}°</small>
             </div>
             <div className="scale-track">
               {lens.focals.map((f, i) => {
@@ -1013,7 +1233,7 @@ export default function Home() {
                     style={{ left: `${percent}%` }}
                     onClick={() => setFocal(f)}
                   >
-                    <i />{f} mm
+                    <i />{f} mm{lens.category === "prime" ? " (定焦)" : ""}
                   </button>
                 );
               })}
@@ -1021,8 +1241,9 @@ export default function Home() {
                 aria-label="調整焦段"
                 type="range"
                 min="0"
-                max={lens.focals.length - 1}
+                max={Math.max(1, lens.focals.length - 1)}
                 step="1"
+                disabled={lens.focals.length <= 1}
                 value={Math.max(0, lens.focals.indexOf(focal))}
                 onChange={e => setFocal(lens.focals[Number(e.target.value)])}
               />
@@ -1032,7 +1253,7 @@ export default function Home() {
         </div>
         <div className="hud-top-right">
           <div className="hud-actions">
-            <button className="icon-button" type="button" aria-label="返回主頁面" onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); setResult(null); setLibraryOpen(false); setStarted(false); }}><span aria-hidden="true">⌂</span></button>
+            <button className="icon-button" type="button" aria-label="返回主頁面" onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); setLibraryOpen(false); setStarted(false); }}><span aria-hidden="true">⌂</span></button>
             <button className="icon-button" type="button" aria-label="相機鏡頭與測光設定" aria-pressed={deckOpen} onClick={() => setDeckOpen(v => !v)}><span aria-hidden="true">☰</span></button>
             <button className="icon-button fullscreen-button" type="button" aria-label={isFs ? "離開全螢幕" : "進入全螢幕"} aria-pressed={isFs} onClick={toggleFullscreen}><span aria-hidden="true">{isFs ? "↙" : "⛶"}</span></button>
           </div>
@@ -1079,12 +1300,33 @@ export default function Home() {
             <section className="lens-section">
               <div className="section-head-row">
                 <span className="section-label">相機鏡頭選擇</span>
-                <span className="lens-spec-tag">F{lensMaxAperture} 最大光圈</span>
+                <span className="lens-spec-tag">F{lensMaxAperture} 最大光圈 · {lens.category === "prime" ? "定焦" : "變焦"}</span>
               </div>
-              <select aria-label="更換鏡頭" value={lensId} onChange={e => { const l = LENSES.find(t => t.id === e.target.value) ?? LENSES[0]; setLensId(l.id); setFocal(l.focals[0]); }}>
-                {LENSES.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              <select
+                aria-label="更換鏡頭"
+                value={lensId}
+                onChange={e => {
+                  const l = LENSES.find(t => t.id === e.target.value) ?? LENSES[0];
+                  setLensId(l.id);
+                  setFocal(closest(l.focals, focal));
+                }}
+              >
+                <optgroup label="── 變焦鏡頭群 (ZOOM) ──">
+                  {LENSES.filter(l => l.category === "zoom").map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="── 定焦鏡頭群 (PRIME) ──">
+                  {LENSES.filter(l => l.category === "prime").map(item => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </optgroup>
               </select>
-              <p>當前視角：{horizontalFieldOfView(focal).toFixed(1)}° · 支援焦段 {lens.focals[0]}–{lens.focals[lens.focals.length - 1]} mm</p>
+              <div className="lens-spec-info">
+                <p><strong>當前視角</strong>：{horizontalFieldOfView(focal).toFixed(1)}° · {lens.category === "prime" ? `固定焦距 ${lens.focals[0]} mm (定焦鏡)` : `支援焦段 ${lens.focals[0]}–${lens.focals[lens.focals.length - 1]} mm (變焦鏡)`} · 光圈 F{lens.maxAperture(focal)}–F{lens.minAperture}</p>
+                <p><strong>規格資訊</strong>：濾鏡 {lens.filter} · 重量 {lens.weight} · {lens.tag}</p>
+                <p className="lens-desc-text"><strong>光學亮點</strong>：{lens.desc}</p>
+              </div>
             </section>
 
             <section className="exposure-system">
@@ -1107,12 +1349,20 @@ export default function Home() {
               </small>
             </section>
 
-            <Control label="鏡頭焦距 (變焦)" value={`${focal} mm`} helper={`視角 ${horizontalFieldOfView(focal).toFixed(1)}°`} index={Math.max(0, lens.focals.indexOf(focal))} max={lens.focals.length - 1} onChange={v => setFocal(lens.focals[v])} />
+            <Control
+              label={lens.category === "prime" ? "鏡頭焦距 (定焦)" : "鏡頭焦距 (變焦)"}
+              value={`${focal} mm`}
+              helper={`視角 ${horizontalFieldOfView(focal).toFixed(1)}°${lens.category === "prime" ? " · 固定焦距" : ""}`}
+              index={Math.max(0, lens.focals.indexOf(focal))}
+              max={Math.max(1, lens.focals.length - 1)}
+              disabled={lens.focals.length <= 1}
+              onChange={v => setFocal(lens.focals[v])}
+            />
 
             <section className="af-size-setting" aria-labelledby="af-size-label">
               <div>
-                <span className="section-label" id="af-size-label">AF 對焦框尺寸</span>
-                <small>固定在畫面正中央</small>
+                <span className="section-label" id="af-size-label">AF 對焦區域 (Spot 對焦點尺寸)</span>
+                <small>參考旗艦相機點對焦規格 (Spot S / M / L)</small>
               </div>
               <div className="af-size-options" role="group" aria-label="AF 對焦框尺寸">
                 {(["small", "medium", "large"] as AfFrameSize[]).map(size => (
@@ -1123,7 +1373,7 @@ export default function Home() {
                     aria-pressed={afFrameSize === size}
                     onClick={() => setAfFrameSize(size)}
                   >
-                    {size === "small" ? "小" : size === "medium" ? "中" : "大"}
+                    {size === "small" ? "點: S (小)" : size === "medium" ? "點: M (中)" : "點: L (大)"}
                   </button>
                 ))}
               </div>
@@ -1171,10 +1421,10 @@ export default function Home() {
             <button type="button" aria-label={`曝光值 ${exposureComp > 0 ? "+" : ""}${exposureComp.toFixed(1)}`} disabled={!controlAvailability.exposure} className={activeControl === "exposure" ? "active" : ""} onClick={() => activateControl("exposure")}><b>{exposureComp > 0 ? "+" : ""}{exposureComp.toFixed(1)}</b></button>
             <button type="button" aria-label={`ISO ${usingAutoIso ? `AUTO ${effective.iso}` : effective.iso}`} disabled={!controlAvailability.iso} className={activeControl === "iso" ? "active" : ""} onClick={() => activateControl("iso")}><b>{usingAutoIso ? `A ${effective.iso}` : effective.iso}</b></button>
           </div>
-          <button className="library-button" type="button" aria-label={`開啟相片庫，${shots.length} 張照片`} onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); setActiveControl(null); setResult(null); setLibraryOpen(true); }}><span className="photo-icon" aria-hidden="true" /></button>
+          <button className="library-button" type="button" aria-label={`開啟相片庫，${shots.length} 張照片`} onPointerEnter={() => void loadPhotoLibrary()} onPointerDown={() => void loadPhotoLibrary()} onFocus={() => void loadPhotoLibrary()} onClick={openLibrary}><span className="photo-icon" aria-hidden="true" /></button>
         </div>
       </footer>
-    </div>
+    </div>}
 
     {!started && <div className="start-screen">
       <div className="start-card">
@@ -1205,9 +1455,9 @@ export default function Home() {
             ))}
           </div>
         </div>
-        <div className="start-actions">
-          <button className="start-play" type="button" onClick={() => enterGame(true)}>進入拍攝 (全螢幕)<span aria-hidden="true">⛶</span></button>
-          <button className="start-alt" type="button" onClick={() => enterGame(false)}>直接遊玩</button>
+        <div className="start-actions" onPointerEnter={() => { void warmCameraExperience(); }} onPointerDown={() => { void warmCameraExperience(); }} onFocus={() => { void warmCameraExperience(); }}>
+          <button className="start-play" type="button" disabled={launching} aria-busy={launching} onClick={() => enterGame(true)}>{launching ? "正在準備相機…" : "進入拍攝 (全螢幕)"}<span aria-hidden="true">⛶</span></button>
+          <button className="start-alt" type="button" disabled={launching} onClick={() => enterGame(false)}>直接遊玩</button>
         </div>
         <ul className="start-keys">
           <li><b>滑鼠</b>轉動視角</li>
@@ -1232,55 +1482,9 @@ export default function Home() {
       </div>
     )}
 
-    {libraryOpen && <dialog open className="gallery" aria-modal="true" aria-label="相片庫">
-      <button type="button" className="gallery-backdrop" aria-label="關閉相片庫" onClick={closeLibrary} />
-      <div className="gallery-panel">
-        <header>
-          <div>
-            <p>PHOTO LIBRARY</p>
-            <h2>{result ? "照片檢視" : "相片庫"}</h2>
-          </div>
-          <span>{result ? `${Math.max(0, availableShots.findIndex(p => p.id === result.photoId)) + 1} / ${availableShots.length}` : `${shots.length} 張照片`}</span>
-          <div className="gallery-actions">
-            {result && <button type="button" className="gallery-action-delete" aria-label="刪除照片" title="刪除照片 (Delete / Backspace)" onClick={() => deletePhoto(result.photoId)}><span aria-hidden="true">🗑</span></button>}
-            {result && <button type="button" aria-label="返回相片庫" onClick={() => setResult(null)}>←</button>}
-            {!result && shots.length > 0 && <button type="button" className="gallery-action-delete" aria-label="清空相片庫" title="清空所有照片" onClick={clearLibrary}><span aria-hidden="true">🗑</span></button>}
-            <button type="button" aria-label="關閉相片庫" onClick={closeLibrary}>×</button>
-          </div>
-        </header>
-        {result && viewedBlob ? <div className="gallery-viewer">
-          <div className="viewer-stage">
-            <BlobPhoto blob={viewedBlob} alt={`${result.title}，${result.score} 分`} />
-            <button className="photo-nav photo-nav-previous" type="button" aria-label="上一張照片" onClick={() => stepPhoto(-1)}>‹</button>
-            <button className="photo-nav photo-nav-next" type="button" aria-label="下一張照片" onClick={() => stepPhoto(1)}>›</button>
-          </div>
-          <div className="viewer-sidebar">
-            <span className="viewer-frame-id">100-000{Math.max(1, availableShots.length - availableShots.findIndex(p => p.id === result.photoId))}</span>
-            {result.params && <div className="viewer-exposure">
-              <b>{result.params.shutter}</b>
-              <b>{result.params.aperture}</b>
-              <b>{result.params.iso}</b>
-              <b>{result.params.focal}</b>
-            </div>}
-            <Histogram image={viewedBlob} />
-          </div>
-        </div> : availableShots.length === 0 ? <div className="gallery-empty"><span aria-hidden="true">▧</span><p>還沒有照片</p></div> : <div className="gallery-grid">{availableShots.map((photo, index) => (
-          <div key={photo.id} className="gallery-card">
-            <button type="button" className="gallery-card-thumb" aria-label={`檢視照片 #${String(shots.length - index).padStart(2, "0")}，${photo.title}`} onClick={() => showPhoto(photo)}>
-              {/* Data-URL thumbnails are already encoded locally and cannot use framework URL optimization. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={photo.thumb} alt={`${photo.title}，${photo.score} 分`} loading="lazy" decoding="async" />
-              <span><b>{photo.params.shutter}</b><b>{photo.params.aperture}</b><b>{photo.params.iso}</b><em>#{String(shots.length - index).padStart(2, "0")}</em></span>
-            </button>
-            <button type="button" className="gallery-card-delete" aria-label={`刪除照片 #${String(shots.length - index).padStart(2, "0")}`} title="刪除照片" onClick={event => deletePhoto(photo.id, event)}>
-              <span aria-hidden="true">🗑</span>
-            </button>
-          </div>
-        ))}</div>}
-      </div>
-    </dialog>}
+    {libraryOpen && <PhotoLibrary shots={shots} onClose={closeLibrary} onDelete={deletePhoto} onClear={clearLibrary} />}
 
-    <section className="mobile-console" aria-label="手機相機操作台">
+    {started && <section className="mobile-console" aria-label="手機相機操作台">
       <div className="mobile-drive-strip" role="group" aria-label="手機過片模式">
         {DRIVE_MODES.map(item => (
           <button
@@ -1319,8 +1523,8 @@ export default function Home() {
         >
           <i />
         </button>
-        <button type="button" className="mobile-library" aria-label={`開啟相片庫，${shots.length} 張照片`} onClick={() => { setActiveControl(null); setLibraryOpen(true); }}><span>相片庫</span><b><i className="photo-icon" aria-hidden="true" /></b></button>
+        <button type="button" className="mobile-library" aria-label={`開啟相片庫，${shots.length} 張照片`} onPointerEnter={() => void loadPhotoLibrary()} onPointerDown={() => void loadPhotoLibrary()} onFocus={() => void loadPhotoLibrary()} onClick={openLibrary}><span>相片庫</span><b><i className="photo-icon" aria-hidden="true" /></b></button>
       </nav>
-    </section>
+    </section>}
   </main>;
 }

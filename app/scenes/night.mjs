@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { block, build3DBird, build3DCar, build3DCat, build3DHuman, build3DPerchedBird, build3DScooter, build3DSittingCat, contactShadow, cylinder, facadeBlock, facadeTexture, glowDecal, lightCone, put, rand, slab, streetLamp, surface } from "../scene-kit.mjs";
+import { block, build3DBat, build3DBird, build3DCar, build3DCat, build3DHuman, build3DPerchedBird, build3DRaccoon, build3DRat, build3DScooter, build3DSittingCat, contactShadow, cylinder, facadeBlock, facadeTexture, glowDecal, lightCone, put, rand, slab, streetLamp, surface } from "../scene-kit.mjs";
 
 /** Static world for the `night` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -130,6 +130,16 @@ export function terrain(THREE, scene) {
 
   const poleOwl = build3DPerchedBird(THREE, "#38bdf8", "#f59e0b");
   put(scene, poleOwl, LAYER.far, [6.5, 6.6, -30.0], [0, -0.5, 0]);
+
+  const yataiRaccoon = build3DRaccoon(THREE, "#475569");
+  put(scene, yataiRaccoon, LAYER.far, [8.7, 0.28, -19.6], [0, -0.8, 0]);
+  contactShadow(THREE, scene, 0.22).position.set(8.7, 0.29, -19.6);
+
+  const drainRat = build3DRat(THREE, "#57534e");
+  put(scene, drainRat, LAYER.far, [-6.8, 0.28, -12.2], [0, 0.45, 0]);
+
+  const neonBat = build3DBat(THREE, "#312e81");
+  put(scene, neonBat, LAYER.far, [4.8, 5.8, -20], [0.15, -0.4, -0.1]);
 
   return {
     updaters: [(elapsed) => {

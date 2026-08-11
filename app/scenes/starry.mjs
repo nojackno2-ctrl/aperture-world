@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { block, boulder, build3DAstronomer, build3DBird, build3DPerchedBird, build3DRestingDeer, contactShadow, cylinder, fence, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
+import { block, boulder, build3DAstronomer, build3DBat, build3DBird, build3DFox, build3DPerchedBird, build3DRestingDeer, contactShadow, cylinder, fence, peak, put, rand, slab, sphere, surface, tree } from "../scene-kit.mjs";
 
 /** Static world for the `starry` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -127,6 +127,13 @@ export function terrain(THREE, scene) {
   const restingGoat = build3DRestingDeer(THREE, "#475569");
   put(scene, restingGoat, LAYER.far, [-8.5, 0.2, -16], [0, 0.6, 0]);
   contactShadow(THREE, scene, 0.45).position.set(-8.5, 0.02, -16);
+
+  const ridgeFox = build3DFox(THREE, "#9a3412");
+  put(scene, ridgeFox, LAYER.far, [9.6, 0.06, -18.4], [0, -0.7, 0]);
+  contactShadow(THREE, scene, 0.3).position.set(9.6, 0.07, -18.4);
+
+  const caveBat = build3DBat(THREE, "#1e1b4b");
+  put(scene, caveBat, LAYER.far, [-4.2, 5.4, -12], [0.1, 0.45, 0]);
 
   return {};
 }

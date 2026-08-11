@@ -1,5 +1,5 @@
 import { LAYER } from "../world.mjs";
-import { block, build3DAirplane, build3DBunny, build3DCar, build3DHuman, build3DPerchedBird, contactShadow, cylinder, facadeBlock, facadeTexture, fence, peak, put, rand, slab, sphere, surface } from "../scene-kit.mjs";
+import { block, build3DAirplane, build3DBunny, build3DCar, build3DFox, build3DHedgehog, build3DHuman, build3DPerchedBird, contactShadow, cylinder, facadeBlock, facadeTexture, fence, peak, put, rand, slab, sphere, surface } from "../scene-kit.mjs";
 
 /** Static world for the `airport` scenario. Loaded only when this scene is played. */
 export function terrain(THREE, scene) {
@@ -173,6 +173,14 @@ export function terrain(THREE, scene) {
   const runwayBunny = build3DBunny(THREE, "#d1d5db");
   put(scene, runwayBunny, LAYER.far, [-6.5, 0.02, -18], [0, 0.5, 0]);
   contactShadow(THREE, scene, 0.25).position.set(-6.5, 0.03, -18);
+
+  const perimeterFox = build3DFox(THREE, "#c2410c");
+  put(scene, perimeterFox, LAYER.far, [24, 0.03, -36], [0, -0.8, 0]);
+  contactShadow(THREE, scene, 0.3).position.set(24, 0.04, -36);
+
+  const grassHedgehog = build3DHedgehog(THREE, "#57534e");
+  put(scene, grassHedgehog, LAYER.far, [-21, 0.03, -27], [0, 0.5, 0]);
+  contactShadow(THREE, scene, 0.16).position.set(-21, 0.04, -27);
 
   return {};
 }
