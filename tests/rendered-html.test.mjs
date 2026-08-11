@@ -1145,3 +1145,86 @@ test("auto exposure dynamically opens aperture in low light and night scenes and
   assert.match(page, /closestSafeShutter\(shutterOptions, \(a \*\* 2\) \/ Math\.pow\(2, targetEv \+ Math\.log2\(i \/ 100\)\), safeShutter\)/, "A mode with manual ISO still obeys the safety shutter");
   assert.doesNotMatch(page, /darkShutter/, "reaching the Auto ISO ceiling must not override the safety shutter");
 });
+
+test("all 12 camera audio WAV sound files are present in public/sounds/ with valid RIFF headers and PCM data", async () => {
+  const soundNames = [
+    "shutter.wav",
+    "shutter_open.wav",
+    "shutter_close.wav",
+    "burst.wav",
+    "af_beep.wav",
+    "dial.wav",
+    "zoom.wav",
+    "mode.wav",
+    "power_on.wav",
+    "warning.wav",
+    "delete.wav",
+    "photo_slide.wav",
+  ];
+
+  for (const name of soundNames) {
+    const filePath = new URL(`../public/sounds/${name}`, import.meta.url);
+    const buf = await readFile(filePath);
+    assert.ok(buf.length > 44, `${name} must be a valid non-empty WAV file`);
+    assert.equal(buf.subarray(0, 4).toString("ascii"), "RIFF", `${name} must have RIFF header`);
+    assert.equal(buf.subarray(8, 12).toString("ascii"), "WAVE", `${name} must have WAVE format`);
+    assert.equal(buf.subarray(12, 16).toString("ascii"), "fmt ", `${name} must have fmt subchunk`);
+    // 16-bit PCM, 44100Hz
+    assert.equal(buf.readUInt16LE(20), 1, `${name} must be uncompressed PCM`);
+    assert.equal(buf.readUInt32LE(24), 44100, `${name} must have 44.1kHz sample rate`);
+    assert.equal(buf.readUInt16LE(34), 16, `${name} must be 16-bit audio`);
+  }
+});
+
+test("the audio engine provides zero-latency SFX and 11-scene ambient soundscapes with mute and accessibility controls", async () => {
+  const audioModuleSource = await readFile(new URL("../app/audio.ts", import.meta.url), "utf8");
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const librarySource = await readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8");
+
+  // Verify all 11 scene soundscapes are handled in audio.ts
+  for (const key of SCENE_KEYS) {
+    assert.ok(
+      audioModuleSource.includes(`sceneKey === "${key}"`),
+      `audio engine must provide soundscape generator for scene: ${key}`
+    );
+  }
+
+  // Verify all essential audio functions are exported
+  const expectedExports = [
+    "playShutter",
+    "playShutterOpen",
+    "playShutterClose",
+    "playBurstClick",
+    "playAfLock",
+    "playDialClick",
+    "playZoomTick",
+    "playModeDial",
+    "playPowerOn",
+    "playWarning",
+    "playDelete",
+    "playPhotoSlide",
+    "startSceneAmbience",
+    "stopSceneAmbience",
+    "pauseSceneAmbience",
+    "resumeSceneAmbience",
+    "setSoundMuted",
+    "isSoundMuted",
+    "toggleSoundMuted",
+    "unlockAudio",
+  ];
+
+  for (const fn of expectedExports) {
+    assert.ok(
+      audioModuleSource.includes(`export const ${fn}`),
+      `audio.ts must export ${fn}`
+    );
+  }
+
+  // Verify page and library integration
+  assert.match(pageSource, /<button[^>]*class(Name)?="[^"]*sound-button/, "HUD includes sound toggle button");
+  assert.match(pageSource, /KeyM/, "Keyboard shortcut M is bound to mute toggle");
+  assert.match(pageSource, /playAfLock()/, "AF sharp lock triggers audio confirmation");
+  assert.match(pageSource, /playPowerOn()/, "Game entry triggers power-on camera audio");
+  assert.match(librarySource, /playPhotoSlide()/, "Photo library slide triggers photo flip audio");
+  assert.match(librarySource, /playDelete()/, "Photo deletion triggers delete audio");
+});
