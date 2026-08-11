@@ -2,6 +2,26 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  isSoundMuted,
+  pauseSceneAmbience,
+  playAfLock,
+  playBurstClick,
+  playDelete,
+  playDialClick,
+  playModeDial,
+  playPowerOn,
+  playShutter,
+  playShutterClose,
+  playShutterOpen,
+  playWarning,
+  playZoomTick,
+  resumeSceneAmbience,
+  startSceneAmbience,
+  stopSceneAmbience,
+  toggleSoundMuted,
+  unlockAudio,
+} from "./audio";
 import { horizontalFieldOfView, trajectoryDistance } from "./optics.mjs";
 import { type Photo } from "./photo-library";
 import { type FocusReading, type LightReading, type ViewportHandle } from "./viewport";
@@ -394,6 +414,12 @@ function Control({ label, value, helper, index, max, disabled = false, onChange 
 }
 
 export default function Home() {
+  const [soundMuted, setSoundMutedState] = useState(() => (typeof window !== "undefined" ? isSoundMuted() : false));
+  const prevSharpRef = useRef(false);
+  const onToggleMute = useCallback(() => {
+    const next = toggleSoundMuted();
+    setSoundMutedState(next);
+  }, []);
   const [sceneIndex, setSceneIndex] = useState(0), [mode, setMode] = useState<Mode>("P"), [driveMode, setDriveMode] = useState<DriveMode>("single"), [aperture, setAperture] = useState(5.6), [shutter, setShutter] = useState(1 / 125), [iso, setIso] = useState(200), [isoAuto, setIsoAuto] = useState(true), [focal, setFocal] = useState(50), [meteringMode, setMeteringMode] = useState<MeteringMode>("multi"), [exposureComp, setExposureComp] = useState(0), [captured, setCaptured] = useState(false), [lensId, setLensId] = useState("standard"), [mobileControl, setMobileControl] = useState<MobileControl>("shutter"), [isFullscreen, setIsFullscreen] = useState(false), [fullscreenError, setFullscreenError] = useState<string | null>(null), [hudVisible, setHudVisible] = useState(true), [deckOpen, setDeckOpen] = useState(false), [started, setStarted] = useState(false), [launching, setLaunching] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false), [driveMenuOpen, setDriveMenuOpen] = useState(false);
   const [exposureState, setExposureState] = useState<ExposureState | null>(null);
@@ -594,8 +620,10 @@ export default function Home() {
 
   const capture = useCallback(() => {
     if (exposureStateRef.current || libraryOpen || !started) return;
-    if (reservedFramesRef.current >= CARD_CAPACITY) return;
-    if (bufferDecayRef.current >= MAX_BUFFER) return;
+    if (reservedFramesRef.current >= CARD_CAPACITY || bufferDecayRef.current >= MAX_BUFFER) {
+      playWarning();
+      return;
+    }
 
     const finalizeCapture = (trajectory: Look[]) => {
       const render = viewportRef.current?.capture({
@@ -674,6 +702,7 @@ export default function Home() {
 
     const shutterSec = effective.shutter;
     if (shutterSec < 0.2) {
+      playShutter(shutterSec);
       const look = lookRef.current;
       finalizeCapture([{ yaw: look.yaw, pitch: look.pitch }]);
       return;
@@ -689,6 +718,7 @@ export default function Home() {
     };
     exposureStateRef.current = state;
     setExposureState(state);
+    playShutterOpen();
 
     let lastProgressUpdate = state.startTime;
     const step = () => {
@@ -702,6 +732,7 @@ export default function Home() {
         exposureStateRef.current = null;
         setExposureState(null);
         exposureTimerRef.current = null;
+        playShutterClose();
         finalizeCapture(finalTrajectory);
       } else {
         const now = performance.now();
@@ -746,6 +777,7 @@ export default function Home() {
         stopBurst();
         return;
       }
+      playBurstClick();
       captureRef.current();
       const delay = bufferDecayRef.current >= MAX_BUFFER ? Math.max(260, driveOpt.interval * 4) : driveOpt.interval;
       burstTimerRef.current = window.setTimeout(triggerNext, delay);
@@ -755,6 +787,7 @@ export default function Home() {
   }, [driveMode, libraryOpen, started, stopBurst]);
 
   const deletePhoto = useCallback((id: number) => {
+    playDelete();
     setShots(previous => {
       if (!previous.some(photo => photo.id === id)) return previous;
       reservedFramesRef.current = Math.max(0, reservedFramesRef.current - 1);
@@ -763,6 +796,7 @@ export default function Home() {
   }, []);
 
   const clearLibrary = useCallback(() => {
+    playDelete();
     captureGenerationRef.current += 1;
     encodingCountRef.current = 0;
     reservedFramesRef.current = 0;
@@ -828,6 +862,7 @@ export default function Home() {
       else if (e.code === "KeyF") { e.preventDefault(); toggleFullscreen(); }
       else if (e.code === "KeyH") { e.preventDefault(); setHudVisible(v => !v); }
       else if (e.code === "KeyP") { e.preventDefault(); setDeckOpen(v => !v); }
+      else if (e.code === "KeyM") { e.preventDefault(); onToggleMute(); }
       else if (e.code === "KeyG") { e.preventDefault(); openLibrary(); }
       else if (e.code === "Escape") {
         if (document.pointerLockElement) document.exitPointerLock();
@@ -849,7 +884,7 @@ export default function Home() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [launching, libraryOpen, openLibrary, startBurst, started, stopBurst, toggleFullscreen]);
+  }, [launching, libraryOpen, onToggleMute, openLibrary, startBurst, started, stopBurst, toggleFullscreen]);
 
   useEffect(() => {
     if (!isBursting) return;
@@ -903,16 +938,24 @@ export default function Home() {
 
   const enterGame = useCallback((fullscreen: boolean) => {
     if (launching) return;
+    unlockAudio();
     setLaunching(true);
+    playPowerOn();
     void warmCameraExperience().then(
-      () => { setStarted(true); setLaunching(false); },
+      () => {
+        setStarted(true);
+        setLaunching(false);
+        startSceneAmbience(scene.id);
+      },
       () => setLaunching(false),
     );
     if (fullscreen) toggleFullscreen().finally(() => requestAim());
     else requestAim();
-  }, [launching, requestAim, toggleFullscreen]);
+  }, [launching, requestAim, scene.id, toggleFullscreen]);
 
   const selectScene = (idx: number) => {
+    unlockAudio();
+    playModeDial();
     if (exposureTimerRef.current) {
       window.cancelAnimationFrame(exposureTimerRef.current);
       exposureTimerRef.current = null;
@@ -924,9 +967,13 @@ export default function Home() {
     viewportRef.current?.setLook(lookRef.current);
     setFocusRead(null);
     setLightEv(0);
+    if (started) {
+      startSceneAmbience(SCENARIOS[idx].id);
+    }
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    unlockAudio();
     if (libraryOpen) return;
     if (event.pointerType === "mouse") {
       if (!aiming) {
@@ -980,6 +1027,7 @@ export default function Home() {
   const mobileDisabled = !controlAvailability[mobileControl];
 
   const setMobileValue = (index: number) => {
+    playDialClick("fine");
     const value = mobileOptions[clamp(index, 0, mobileOptions.length - 1)];
     if (mobileControl === "shutter") setShutter(value); else if (mobileControl === "aperture") setAperture(value); else if (mobileControl === "iso") { if (value === ISO_AUTO_SCALE_VALUE) setIsoAuto(true); else { setIsoAuto(false); setIso(value); } } else setExposureComp(value);
   };
@@ -1007,6 +1055,7 @@ export default function Home() {
   const activeLabel = activeControl === "shutter" ? "快門" : activeControl === "aperture" ? "光圈" : activeControl === "iso" ? "ISO" : "曝光值";
   const formatControlValue = (control: MobileControl | null, value: number) => control === "shutter" ? shutterLabel(value) : control === "aperture" ? `F${value}` : control === "iso" ? value === ISO_AUTO_SCALE_VALUE ? "AUTO" : `${value}` : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
   const setActiveValue = (nextIndex: number) => {
+    playDialClick("fine");
     if (!activeControl) return;
     const value = activeOptions[clamp(nextIndex, 0, activeOptions.length - 1)];
     if (activeControl === "shutter") setShutter(value); else if (activeControl === "aperture") setAperture(value); else if (activeControl === "iso") { if (value === ISO_AUTO_SCALE_VALUE) setIsoAuto(true); else { setIsoAuto(false); setIso(value); } } else setExposureComp(value);
@@ -1014,6 +1063,25 @@ export default function Home() {
 
   const isFs = isFullscreen;
   const isSharp = focusBlur <= FOCUS_MISS_PX;
+
+  useEffect(() => {
+    if (started && !libraryOpen && isSharp && !prevSharpRef.current) {
+      playAfLock();
+    }
+    prevSharpRef.current = isSharp;
+  }, [isSharp, libraryOpen, started]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        pauseSceneAmbience();
+      } else if (started && !libraryOpen) {
+        resumeSceneAmbience();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [libraryOpen, started]);
 
   return <main
     className={`game-shell ${captured ? "captured" : ""} ${exposureState ? "is-exposing" : ""} ${isBursting ? "is-bursting" : ""} ${hudVisible ? "" : "hud-off"} ${deckOpen ? "" : "deck-closed"} ${started ? "" : "not-started"}`}
@@ -1064,6 +1132,7 @@ export default function Home() {
       onPointerCancel={() => { pointerDragRef.current = null; stopBurst(); }}
       onWheel={e => {
         e.preventDefault();
+        playZoomTick();
         const nextIndex = clamp(lens.focals.indexOf(focal) + (e.deltaY > 0 ? -1 : 1), 0, lens.focals.length - 1);
         setFocal(lens.focals[nextIndex]);
       }}
@@ -1148,7 +1217,7 @@ export default function Home() {
                       aria-checked={mode === item.key}
                       onClick={e => {
                         e.stopPropagation();
-                        setMode(item.key);
+                        playModeDial(); setMode(item.key);
                         setActiveControl(null);
                         setModeMenuOpen(false);
                       }}
@@ -1190,7 +1259,7 @@ export default function Home() {
                       aria-checked={driveMode === item.key}
                       onClick={e => {
                         e.stopPropagation();
-                        setDriveMode(item.key);
+                        playModeDial(); setDriveMode(item.key);
                         setDriveMenuOpen(false);
                       }}
                       className={`drive-popover-item ${driveMode === item.key ? "active" : ""}`}
@@ -1245,7 +1314,7 @@ export default function Home() {
                 step="1"
                 disabled={lens.focals.length <= 1}
                 value={Math.max(0, lens.focals.indexOf(focal))}
-                onChange={e => setFocal(lens.focals[Number(e.target.value)])}
+                onChange={e => { playZoomTick(); setFocal(lens.focals[Number(e.target.value)]); }}
               />
               <em style={{ left: `${lens.focals.length <= 1 ? 50 : (Math.max(0, lens.focals.indexOf(focal)) / (lens.focals.length - 1)) * 74 + 13}%` }} />
             </div>
@@ -1253,7 +1322,8 @@ export default function Home() {
         </div>
         <div className="hud-top-right">
           <div className="hud-actions">
-            <button className="icon-button" type="button" aria-label="返回主頁面" onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); setLibraryOpen(false); setStarted(false); }}><span aria-hidden="true">⌂</span></button>
+            <button className="icon-button sound-button" type="button" aria-label={soundMuted ? "開啟音效與環境音 (M)" : "靜音音效與環境音 (M)"} aria-pressed={!soundMuted} onClick={onToggleMute}><span aria-hidden="true">{soundMuted ? "🔇" : "🔊"}</span></button>
+            <button className="icon-button" type="button" aria-label="返回主頁面" onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); stopSceneAmbience(); setLibraryOpen(false); setStarted(false); }}><span aria-hidden="true">⌂</span></button>
             <button className="icon-button" type="button" aria-label="相機鏡頭與測光設定" aria-pressed={deckOpen} onClick={() => setDeckOpen(v => !v)}><span aria-hidden="true">☰</span></button>
             <button className="icon-button fullscreen-button" type="button" aria-label={isFs ? "離開全螢幕" : "進入全螢幕"} aria-pressed={isFs} onClick={toggleFullscreen}><span aria-hidden="true">{isFs ? "↙" : "⛶"}</span></button>
           </div>
@@ -1306,6 +1376,7 @@ export default function Home() {
                 aria-label="更換鏡頭"
                 value={lensId}
                 onChange={e => {
+                  playModeDial();
                   const l = LENSES.find(t => t.id === e.target.value) ?? LENSES[0];
                   setLensId(l.id);
                   setFocal(closest(l.focals, focal));
@@ -1376,6 +1447,23 @@ export default function Home() {
                     {size === "small" ? "點: S (小)" : size === "medium" ? "點: M (中)" : "點: L (大)"}
                   </button>
                 ))}
+              </div>
+            </section>
+
+            <section className="audio-section">
+              <div className="section-head-row">
+                <span className="section-label">音效與環境音 (Sound & Ambience)</span>
+                <span className="drive-spec-tag">{soundMuted ? "靜音中" : "已開啟"}</span>
+              </div>
+              <div className="audio-controls-row">
+                <button
+                  type="button"
+                  className={`audio-toggle-btn ${!soundMuted ? "active" : ""}`}
+                  onClick={onToggleMute}
+                  aria-pressed={!soundMuted}
+                >
+                  <span aria-hidden="true">{soundMuted ? "🔇 音效已靜音 (按 M 切換)" : "🔊 音效與環境音正常 (按 M 切換)"}</span>
+                </button>
               </div>
             </section>
 
@@ -1468,6 +1556,7 @@ export default function Home() {
           <li><b>ESC</b>放開滑鼠</li>
           <li><b>P</b>參數面板</li>
           <li><b>H</b>隱藏介面</li>
+          <li><b>M</b>音效開關</li>
           <li><b>F</b>全螢幕</li>
         </ul>
       </div>

@@ -6,6 +6,12 @@ Build a browser-based photography practice game for beginners that teaches the e
 
 ## Active optimization objective (2026-08-08)
 
+- 2026-08-11 全片幅相機音效與 11 場景沉浸環境音效系統建置（回應「這個遊戲沒有音效」「場景也要有音效」）：
+  1. **真實相機物理與電子音效 (Camera SFX)**：在 `public/sounds/` 生成 12 款標準無壓縮 16-bit 44.1kHz WAV 音訊檔案（單張機械快門 `shutter.wav`、長曝光雙階段前後簾快門 `shutter_open.wav` / `shutter_close.wav`、連拍電子/機械過片 `burst.wav`、AF-S 雙音頻合焦蜂鳴 `af_beep.wav`、控制轉盤刻度 `dial.wav`、光學變焦伺服 `zoom.wav`、模式/過片轉盤 `mode.wav`、開機自檢 `power_on.wav`、緩衝/卡滿警示 `warning.wav`、相片庫翻頁 `photo_slide.wav`、相片刪除 `delete.wav`）。
+  2. **11 個拍攝場景專屬沉浸環境音場 (11-Scene Ambient Soundscapes)**：於 `app/audio.ts` 開發專用 Procedural Ambience Generator，涵蓋高山湖泊微風松林鳥鳴 (`landscape`)、靜謐室內溫暖微風 (`portrait`)、雨後城市水窪與街區車流胎噪 (`street`)、體育場開闊空氣與看台群眾歡呼 (`sports`)、陽光公園噴泉潺潺流水與雀鳥 (`group`)、濕地水波拍岸與水鳥雁鴨啼鳴 (`bird`)、夜市熱鬧喧嘩與油煙微響 (`night`)、星空營火木炭劈啪與夜行蟋蟀 (`starry`)、山頂觀景台強風與繁華谷底城市低頻嗡鳴 (`city_night`)、機場跑道強風與噴射機渦輪引擎低頻咆哮 (`airport`)、戶外花園噴泉落水與花間鳥語 (`outdoor_portrait`)。
+  3. **雙軌音訊架構與平滑切換 (Dual-Track & Cross-fade)**：SFX 音軌與 Ambience 音軌分軌獨立增益控制，場景切換時以 1.2 秒平滑交錯 Cross-fading；開啟相片庫或分頁隱藏 (`visibilitychange`) 時自動暫停/淡化，關閉時平滑恢復。
+  4. **音效開關與控制**：頂部 HUD 與相機設定面板 (`.param-deck`) 增設音效按鈕（🔊 / 🔇），支援鍵盤 `M` 鍵快速靜音，狀態自動持久化於 `localStorage`。
+  5. **驗證結果**：TypeScript (`tsc --noEmit --incremental false`)、ESLint (0 errors, 0 warnings)、Vinext 生產建置、32/32 單元與契約測試全數通過。
 - 2026-08-11 公開化與授權條款補齊：補齊根目錄 MIT `LICENSE` 檔案，透過 GitHub CLI 將儲存庫權限轉為 Public，並清理內部路徑去識別化。
 - Comprehensively optimize architecture, CPU, GPU, memory, and network loading while preserving every current scene object, its placement, motion, lighting, camera behavior, and visible result.
 - 2026-08-10 曝光刻度全部擠在左側的修復。`app/page.tsx:1389` 的曝光刻度（快門／光圈／EV／ISO）以 `<span>` 繪製刻度，但 `app/camera.css` 只有 `.scale-track button{position:absolute;…}`，`<span>` 因此沒有 `position:absolute`，行內樣式的 `left: X%` 完全失效而全部靠左流動；畫面上仍看得到橫向分布的細線是 `.scale-track:before` 的 repeating-linear-gradient，不是刻度本身。修法是把四條基底規則改成同時匹配 `button` 與 `span`（`.scale-track button,.scale-track span` 等），焦段刻度用的是 `<button>` 且有 `.focal-scale` 前綴的覆寫規則，完全不受影響。另外把刻度位置由 `offset * 12.5`（0 %–100 %）改為 `6 + offset * 11`（6 %–94 %）：刻度以自身為中心並套 `translateX(-50%)`，而 `.scale-track` 是 `overflow:hidden`，原本頭尾兩個標籤會被切掉一半；中央仍精確落在 50 %，與固定指標 `em` 對齊。驗證：在執行中的頁面實測，修正前 9 個 span 全是 `position:static`、擠在 x=113–338；套用後落點為 6/17/28/39/50/61/72/83/94 %，與行內 `left` 逐一吻合，頭尾各留 56 px 邊距不再被裁切，焦段刻度維持 13/31.5/50/68.5/87 %。TypeScript、ESLint、生產建置與 30/30 測試全數通過。

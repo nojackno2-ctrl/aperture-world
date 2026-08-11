@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { playDelete, playPhotoSlide } from "./audio";
 
 const loadHistogram = () => import("./histogram");
 const Histogram = dynamic(() => loadHistogram().then(module => module.Histogram), {
@@ -113,6 +114,7 @@ export function PhotoLibrary({ shots, onClose, onDelete, onClear }: Props) {
   };
 
   const stepPhoto = (offset: number) => {
+    playPhotoSlide();
     if (!shots.length) return;
     const currentIndex = shots.findIndex(photo => photo.id === selectedPhotoId);
     const nextIndex = (Math.max(0, currentIndex) + offset + shots.length) % shots.length;
@@ -120,6 +122,7 @@ export function PhotoLibrary({ shots, onClose, onDelete, onClear }: Props) {
   };
 
   const deleteSelectedPhoto = () => {
+    playDelete();
     if (!selectedPhoto) return;
     const currentIndex = shots.findIndex(photo => photo.id === selectedPhoto.id);
     const remaining = shots.filter(photo => photo.id !== selectedPhoto.id);
