@@ -1,5 +1,10 @@
 # AI Handoff
 
+## 2026-08-12 publication state
+
+- Pushed exact source commit `6ec7b2b1f285c5c297baf2f01ca29bdb341f933a` to GitHub and the existing Sites-controlled source repository. Sites version 4 deployed successfully to the owner-only production URL `https://aperture-world.gjhcy4gc52.chatgpt.site`.
+- Updating the separate public Cloudflare Worker was refused at the external production-authorization boundary. No workaround was attempted; explicit user authorization remains required before `wrangler deploy`.
+
 ## Audio demand-loading and local runtime compatibility (2026-08-12, completed locally)
 
 - Clean baseline: `main` at `cc7b4a7`, matching `origin/main`, with no tracked or untracked working-tree changes before this pass.
