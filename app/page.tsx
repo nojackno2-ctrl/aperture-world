@@ -21,7 +21,7 @@ import {
   stopSceneAmbience,
   toggleSoundMuted,
   unlockAudio,
-} from "./audio";
+} from "./audio-loader";
 import { horizontalFieldOfView, trajectoryDistance } from "./optics.mjs";
 import { type Photo } from "./photo-library";
 import { type FocusReading, type LightReading, type ViewportHandle } from "./viewport";
@@ -414,7 +414,12 @@ function Control({ label, value, helper, index, max, disabled = false, onChange 
 }
 
 export default function Home() {
-  const [soundMuted, setSoundMutedState] = useState(() => (typeof window !== "undefined" ? isSoundMuted() : false));
+  const [soundMuted, setSoundMutedState] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSoundMutedState(isSoundMuted()), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   const prevSharpRef = useRef(false);
   const onToggleMute = useCallback(() => {
     const next = toggleSoundMuted();
@@ -833,9 +838,15 @@ export default function Home() {
       if (!started) {
         if (!launching && (e.code === "Space" || e.code === "Enter")) {
           e.preventDefault();
+          unlockAudio();
+          playPowerOn();
           setLaunching(true);
           void warmCameraExperience().then(
-            () => { setStarted(true); setLaunching(false); },
+            () => {
+              setStarted(true);
+              setLaunching(false);
+              startSceneAmbience(scene.id);
+            },
             () => setLaunching(false),
           );
         }
@@ -884,7 +895,7 @@ export default function Home() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [launching, libraryOpen, onToggleMute, openLibrary, startBurst, started, stopBurst, toggleFullscreen]);
+  }, [launching, libraryOpen, onToggleMute, openLibrary, scene.id, startBurst, started, stopBurst, toggleFullscreen]);
 
   useEffect(() => {
     if (!isBursting) return;
