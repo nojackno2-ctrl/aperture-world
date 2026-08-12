@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { playDelete, playPhotoSlide } from "./audio";
+import { playDelete, playPhotoSlide } from "./audio-loader";
 
 const loadHistogram = () => import("./histogram");
 const Histogram = dynamic(() => loadHistogram().then(module => module.Histogram), {

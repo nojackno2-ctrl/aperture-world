@@ -74,34 +74,59 @@ class SoundEngine {
     }
   }
 
+  private configureContext(ctx: AudioContext): boolean {
+    if (this.ctx) return this.ctx === ctx;
+    try {
+      this.ctx = ctx;
+      this.masterGain = ctx.createGain();
+      this.masterGain.gain.setValueAtTime(this.muted ? 0 : 1, ctx.currentTime);
+      this.masterGain.connect(ctx.destination);
+
+      this.sfxGain = ctx.createGain();
+      this.sfxGain.gain.setValueAtTime(this.sfxVolume, ctx.currentTime);
+      this.sfxGain.connect(this.masterGain);
+
+      this.ambientGain = ctx.createGain();
+      this.ambientGain.gain.setValueAtTime(this.ambientVolume, ctx.currentTime);
+      this.ambientGain.connect(this.masterGain);
+
+      this.generateNoiseBuffers(ctx);
+      return true;
+    } catch {
+      this.ctx = null;
+      this.masterGain = null;
+      this.sfxGain = null;
+      this.ambientGain = null;
+      return false;
+    }
+  }
+
+  public useAudioContext(ctx: AudioContext): void {
+    this.configureContext(ctx);
+  }
+
   private initContext(): AudioContext | null {
     if (typeof window === "undefined") return null;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
+      let ctx: AudioContext;
       try {
-        this.ctx = new AudioCtx();
-        this.masterGain = this.ctx.createGain();
-        this.masterGain.gain.setValueAtTime(this.muted ? 0 : 1, this.ctx.currentTime);
-        this.masterGain.connect(this.ctx.destination);
-
-        this.sfxGain = this.ctx.createGain();
-        this.sfxGain.gain.setValueAtTime(this.sfxVolume, this.ctx.currentTime);
-        this.sfxGain.connect(this.masterGain);
-
-        this.ambientGain = this.ctx.createGain();
-        this.ambientGain.gain.setValueAtTime(this.ambientVolume, this.ctx.currentTime);
-        this.ambientGain.connect(this.masterGain);
-
-        this.generateNoiseBuffers(this.ctx);
+        ctx = new AudioCtx();
       } catch {
         return null;
       }
+      if (!this.configureContext(ctx)) {
+        void ctx.close().catch(() => undefined);
+        return null;
+      }
     }
-    if (this.ctx.state === "suspended") {
-      void this.ctx.resume();
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    if (ctx.state === "suspended") {
+      void ctx.resume();
     }
-    return this.ctx;
+    return ctx;
   }
 
   public unlock(): void {
@@ -796,3 +821,4 @@ export const isSoundMuted = () => soundEngine.isMuted();
 export const toggleSoundMuted = () => soundEngine.toggleMute();
 export const setAmbientVolume = (vol: number) => soundEngine.setAmbientVolume(vol);
 export const unlockAudio = () => soundEngine.unlock();
+export const initializeAudioContext = (context: AudioContext) => soundEngine.useAudioContext(context);
