@@ -164,11 +164,11 @@ export function PhotoLibrary({ shots, onClose, onDelete, onClear }: Props) {
           </div>
           <span>{selectedPhoto ? `${Math.max(0, shots.findIndex(photo => photo.id === selectedPhoto.id)) + 1} / ${shots.length}` : `${shots.length} 張照片`}</span>
           <div className="gallery-actions">
-            {selectedPhoto && <button type="button" className="gallery-action-download" aria-label="下載原始高畫質照片" title={`下載 ${selectedPhoto.width} × ${selectedPhoto.height} JPEG`} onClick={() => downloadPhoto(selectedPhoto)}><span aria-hidden="true">⇩</span></button>}
-            {selectedPhoto && <button type="button" className="gallery-action-delete" aria-label="刪除照片" title="刪除照片 (Delete / Backspace)" onClick={deleteSelectedPhoto}><span aria-hidden="true">🗑</span></button>}
-            {selectedPhoto && <button type="button" aria-label="返回相片庫" onClick={() => setSelectedPhotoId(null)}>←</button>}
-            {!selectedPhoto && shots.length > 0 && <button type="button" className="gallery-action-delete" aria-label="清空相片庫" title="清空所有照片" onClick={() => { onClear(); setSelectedPhotoId(null); }}><span aria-hidden="true">🗑</span></button>}
-            <button type="button" aria-label="關閉相片庫" onClick={onClose}>×</button>
+            {selectedPhoto && <button type="button" className="gallery-action-download" aria-label="下載原始高畫質照片" title={`下載 ${selectedPhoto.width} × ${selectedPhoto.height} JPEG`} onClick={() => downloadPhoto(selectedPhoto)}><span aria-hidden="true">DL</span></button>}
+            {selectedPhoto && <button type="button" className="gallery-action-delete" aria-label="刪除照片" title="刪除照片 (Delete / Backspace)" onClick={deleteSelectedPhoto}><span aria-hidden="true">DEL</span></button>}
+            {selectedPhoto && <button type="button" aria-label="返回相片庫" onClick={() => setSelectedPhotoId(null)}>BACK</button>}
+            {!selectedPhoto && shots.length > 0 && <button type="button" className="gallery-action-delete" aria-label="清空相片庫" title="清空所有照片" onClick={() => { onClear(); setSelectedPhotoId(null); }}><span aria-hidden="true">CLEAR</span></button>}
+            <button type="button" aria-label="關閉相片庫" onClick={onClose}>CLOSE</button>
           </div>
         </header>
         {selectedPhoto ? <div className="gallery-viewer">
@@ -199,10 +199,10 @@ export function PhotoLibrary({ shots, onClose, onDelete, onClear }: Props) {
               <span><b>{photo.params.shutter}</b><b>{photo.params.aperture}</b><b>{photo.params.iso}</b><em>#{String(shots.length - index).padStart(2, "0")}</em></span>
             </button>
             <button type="button" className="gallery-card-download" aria-label={`下載照片 #${String(shots.length - index).padStart(2, "0")}，${photo.width} × ${photo.height}`} title="下載原始高畫質照片" onClick={event => { event.stopPropagation(); event.preventDefault(); downloadPhoto(photo); }}>
-              <span aria-hidden="true">⇩</span>
+              <span aria-hidden="true">DL</span>
             </button>
             <button type="button" className="gallery-card-delete" aria-label={`刪除照片 #${String(shots.length - index).padStart(2, "0")}`} title="刪除照片" onClick={event => { event.stopPropagation(); event.preventDefault(); onDelete(photo.id); }}>
-              <span aria-hidden="true">🗑</span>
+              <span aria-hidden="true">DEL</span>
             </button>
           </div>
         ))}{shots.length > GALLERY_BATCH_SIZE && <button

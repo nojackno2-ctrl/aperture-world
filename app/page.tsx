@@ -103,7 +103,7 @@ const SCENARIOS: Scenario[] = [
   { id: "group", eyebrow: "05 · 合影", title: "朋友們的紀念照", brief: "每一排人的臉都要在景深範圍內。", lesson: "多人合影不要一味開大光圈；稍微縮小更安全。", sceneEv: 12.8, speed: .3, focal: [35, 70], aperture: [5.6, 11], minShutter: 1 / 160, accent: "#c7b573" },
   { id: "street", eyebrow: "06 · 白天街拍", title: "轉角的一秒", brief: "快速反應，兼顧移動人物與環境敘事。", lesson: "程式自動曝光適合光線穩定、瞬間難預測的街頭。", sceneEv: 14.2, speed: 2.5, focal: [28, 50], aperture: [4, 11], minShutter: 1 / 320, accent: "#5d95d2" },
   { id: "night", eyebrow: "07 · 夜間", title: "霓虹雨夜", brief: "留住環境光，同時避免人物晃動。", lesson: "夜間是光圈、快門與 ISO 的三方取捨。", sceneEv: 5.8, speed: 1.2, focal: [35, 85], aperture: [1.4, 2.8], minShutter: 1 / 125, accent: "#a77cf3" },
-  { id: "starry", eyebrow: "08 · 山上星空夜景", title: "銀河與高山星夜", brief: "極致漆黑的山巔，用長曝光與大光圈捕捉繁星與銀河。", lesson: "星空極暗需要長達 10–30 秒長曝光、最大光圈與高 ISO，並鎖定無限遠對焦。", sceneEv: -4.5, speed: 0.01, focal: [24, 35], aperture: [1.4, 2.8], minShutter: 10, accent: "#818cf8" },
+  { id: "starry", eyebrow: "08 · 山上星空夜景", title: "銀河與高山星夜", brief: "極致漆黑的山巔，用長曝光與大光圈捕捉繁星與銀河。", lesson: "星空極暗需要長達 10-30 秒長曝光、最大光圈與高 ISO，並鎖定無限遠對焦。", sceneEv: -4.5, speed: 0.01, focal: [24, 35], aperture: [1.4, 2.8], minShutter: 10, accent: "#818cf8" },
   { id: "city_night", eyebrow: "09 · 山上城市夜景", title: "山頂俯瞰璀璨城景", brief: "在遠山高處捕捉遠方繁華都會的萬家燈火與車流光軌。", lesson: "遠距俯瞰夜景，縮小光圈可獲得清晰銳利光芒與星芒效果，搭配長曝光展現夜景層次。", sceneEv: 3.8, speed: 0.5, focal: [70, 200], aperture: [5.6, 11], minShutter: 2, accent: "#38bdf8" },
   { id: "airport", eyebrow: "10 · 機場飛機起降", title: "跑道上的鋼鐵巨鳥", brief: "在機場遠處以超長焦鎖定客機高速起降與拉起瞬間。", lesson: "高速運動的大型飛機需要 1/1000 秒以上高速快門凝結機身與氣流，搭配超遠攝鏡頭追焦。", sceneEv: 13.6, speed: 18, focal: [200, 600], aperture: [5.6, 8], minShutter: 1 / 1000, accent: "#fb923c" },
   { id: "outdoor_portrait", eyebrow: "11 · 室外人像", title: "陽光花園戶外人像", brief: "在戶外自然光與樹蔭花景中，拍出柔美背景虛化的人像特寫。", lesson: "戶外人像善用大光圈分離人物與繁雜背景，注意臉部受光與曝光補償避免逆光暗臉。", sceneEv: 12.2, speed: 0.2, focal: [50, 85], aperture: [1.4, 2.8], minShutter: 1 / 250, accent: "#ec4899" },
@@ -134,7 +134,7 @@ const LENSES: LensSpec[] = [
   // ── 變焦鏡頭群 (ZOOM LENSES) ──
   {
     id: "zoom_12_24_f28",
-    name: "12–24 mm F2.8 旗艦超廣角變焦",
+    name: "12-24 mm F2.8 旗艦超廣角變焦",
     category: "zoom",
     focals: [12, 14, 16, 18, 20, 24],
     maxAperture: () => 2.8,
@@ -146,7 +146,7 @@ const LENSES: LensSpec[] = [
   },
   {
     id: "zoom_16_35_f28_ii",
-    name: "16–35 mm F2.8 II 旗艦廣角變焦",
+    name: "16-35 mm F2.8 II 旗艦廣角變焦",
     category: "zoom",
     focals: [16, 20, 24, 28, 35],
     maxAperture: () => 2.8,
@@ -158,7 +158,7 @@ const LENSES: LensSpec[] = [
   },
   {
     id: "standard",
-    name: "24–70 mm F2.8 II 旗艦標準變焦",
+    name: "24-70 mm F2.8 II 旗艦標準變焦",
     category: "zoom",
     focals: [24, 28, 35, 50, 70],
     maxAperture: () => 2.8,
@@ -170,7 +170,7 @@ const LENSES: LensSpec[] = [
   },
   {
     id: "zoom_28_70_f2",
-    name: "28–70 mm F2.0 旗艦大光圈標準變焦",
+    name: "28-70 mm F2.0 旗艦大光圈標準變焦",
     category: "zoom",
     focals: [28, 35, 40, 50, 70],
     maxAperture: () => 2.0,
@@ -182,7 +182,7 @@ const LENSES: LensSpec[] = [
   },
   {
     id: "portrait",
-    name: "70–200 mm F2.8 II 防手震遠攝變焦",
+    name: "70-200 mm F2.8 II 防手震遠攝變焦",
     category: "zoom",
     focals: [70, 85, 100, 135, 200],
     maxAperture: () => 2.8,
@@ -194,7 +194,7 @@ const LENSES: LensSpec[] = [
   },
   {
     id: "zoom_100_400_f45_56",
-    name: "100–400 mm F4.5–5.6 防手震超遠攝變焦",
+    name: "100-400 mm F4.5-5.6 防手震超遠攝變焦",
     category: "zoom",
     focals: [100, 135, 200, 300, 400],
     maxAperture: (f: number) => f <= 100 ? 4.5 : f <= 200 ? 5.0 : 5.6,
@@ -359,6 +359,10 @@ function formatFocusDistance(meters: number) {
   return `${Math.round(meters * 100)} cm`;
 }
 
+function scenarioLabel(eyebrow: string) {
+  return eyebrow.replace(/^\d+\s*·\s*/, "");
+}
+
 function clamp(v: number, min: number, max: number) { return Math.min(max, Math.max(min, v)); }
 function closest(values: number[], target: number) { return values.reduce((best, value) => Math.abs(value - target) < Math.abs(best - target) ? value : best); }
 function closestSafeShutter(values: number[], target: number, safeShutter: number) {
@@ -370,43 +374,7 @@ const CAPTURE_REFERENCE_WIDTH = 1920;
 const FOCUS_MISS_PX = 1.35;
 
 function DriveIcon({ drive }: { drive: DriveMode }) {
-  switch (drive) {
-    case "single":
-      return (
-        <svg viewBox="0 0 24 24" className="drive-svg-icon" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="4" width="18" height="16" rx="2.5" strokeWidth="1.8" />
-          <circle cx="12" cy="12" r="4" strokeWidth="1.5" opacity="0.85" />
-          <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
-        </svg>
-      );
-    case "burst_hi":
-      return (
-        <svg viewBox="0 0 24 24" className="drive-svg-icon" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="3" width="12" height="12" rx="1.5" opacity="0.45" strokeWidth="1.3" />
-          <rect x="6" y="6" width="12" height="12" rx="1.5" opacity="0.7" strokeWidth="1.5" />
-          <rect x="3" y="9" width="12" height="12" rx="1.5" strokeWidth="2" />
-          <path d="M15 18l3-3-3-3M19 15h-4" stroke="var(--accent)" strokeWidth="1.8" />
-        </svg>
-      );
-    case "burst_mid":
-      return (
-        <svg viewBox="0 0 24 24" className="drive-svg-icon" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="8" y="4" width="12" height="12" rx="1.5" opacity="0.55" strokeWidth="1.4" />
-          <rect x="5" y="7" width="12" height="12" rx="1.5" opacity="0.8" strokeWidth="1.6" />
-          <rect x="2" y="10" width="12" height="12" rx="1.5" strokeWidth="2" />
-          <path d="M16 17l2.5-2.5-2.5-2.5" stroke="currentColor" strokeWidth="1.7" />
-        </svg>
-      );
-    case "burst_lo":
-      return (
-        <svg viewBox="0 0 24 24" className="drive-svg-icon" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="7" y="5" width="13" height="13" rx="2" opacity="0.65" strokeWidth="1.5" />
-          <rect x="3" y="8" width="13" height="13" rx="2" strokeWidth="2" />
-        </svg>
-      );
-    default:
-      return null;
-  }
+  return <span className="drive-svg-icon" data-drive={drive} aria-hidden="true"><i /><i /><i /></span>;
 }
 
 function Control({ label, value, helper, index, max, disabled = false, onChange }: { label: string; value: string; helper?: string; index: number; max: number; disabled?: boolean; onChange: (value: number) => void }) {
@@ -662,7 +630,7 @@ export default function Home() {
       if (effective.aperture < scene.aperture[0] || effective.aperture > scene.aperture[1]) {
         notes.push(scene.id === "group" || scene.id === "landscape" || scene.id === "city_night" ? "景深不足：縮小光圈讓更多距離清楚。" : "可以開大光圈，讓主體從背景中跳出來。");
       }
-      if (focal < scene.focal[0] || focal > scene.focal[1]) notes.push(`這個任務適合 ${scene.focal[0]}–${scene.focal[1]} mm。`);
+      if (focal < scene.focal[0] || focal > scene.focal[1]) notes.push(`這個任務適合 ${scene.focal[0]}-${scene.focal[1]} mm。`);
       if (!notes.length) notes.push("曝光、對焦與景深都很到位。試著換模式再拍一次！");
 
       const title = totalScore >= 90 ? "精彩捕捉" : totalScore >= 75 ? "很接近了" : totalScore >= 55 ? "值得再試一次" : "先讀讀教練提示";
@@ -1171,7 +1139,7 @@ export default function Home() {
             <span>{focal} mm</span>
             <span>F{effective.aperture}</span>
             <span>ISO {effective.iso}</span>
-            {exposureState.trajectory.length > 2 && <span className="countdown-motion-tag">✦ 運鏡光軌記錄中</span>}
+            {exposureState.trajectory.length > 2 && <span className="countdown-motion-tag">運鏡光軌記錄中</span>}
           </div>
         </div>
       )}
@@ -1190,7 +1158,7 @@ export default function Home() {
         <div className="hud-top-left hud-fade">
           <div className="scene-row">
             <div className="scene-identity">
-              <p>{scene.eyebrow}</p>
+              <p>{scenarioLabel(scene.eyebrow)}</p>
               <h1>{scene.title}</h1>
             </div>
             {started && (
@@ -1333,10 +1301,10 @@ export default function Home() {
         </div>
         <div className="hud-top-right">
           <div className="hud-actions">
-            <button className="icon-button sound-button" type="button" aria-label={soundMuted ? "開啟音效與環境音 (M)" : "靜音音效與環境音 (M)"} aria-pressed={!soundMuted} onClick={onToggleMute}><span aria-hidden="true">{soundMuted ? "🔇" : "🔊"}</span></button>
-            <button className="icon-button" type="button" aria-label="返回主頁面" onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); stopSceneAmbience(); setLibraryOpen(false); setStarted(false); }}><span aria-hidden="true">⌂</span></button>
-            <button className="icon-button" type="button" aria-label="相機鏡頭與測光設定" aria-pressed={deckOpen} onClick={() => setDeckOpen(v => !v)}><span aria-hidden="true">☰</span></button>
-            <button className="icon-button fullscreen-button" type="button" aria-label={isFs ? "離開全螢幕" : "進入全螢幕"} aria-pressed={isFs} onClick={toggleFullscreen}><span aria-hidden="true">{isFs ? "↙" : "⛶"}</span></button>
+            <button className="icon-button sound-button" type="button" aria-label={soundMuted ? "開啟音效與環境音 (M)" : "靜音音效與環境音 (M)"} aria-pressed={!soundMuted} onClick={onToggleMute}><span aria-hidden="true">{soundMuted ? "SND OFF" : "SND"}</span></button>
+            <button className="icon-button" type="button" aria-label="返回主頁面" onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); stopSceneAmbience(); setLibraryOpen(false); setStarted(false); }}><span aria-hidden="true">HOME</span></button>
+            <button className="icon-button" type="button" aria-label="相機鏡頭與測光設定" aria-pressed={deckOpen} onClick={() => setDeckOpen(v => !v)}><span aria-hidden="true">SET</span></button>
+            <button className="icon-button fullscreen-button" type="button" aria-label={isFs ? "離開全螢幕" : "進入全螢幕"} aria-pressed={isFs} onClick={toggleFullscreen}><span aria-hidden="true">{isFs ? "EXIT" : "FULL"}</span></button>
           </div>
         </div>
       </header>
@@ -1344,10 +1312,10 @@ export default function Home() {
       <aside className="param-deck glass" aria-label="相機鏡頭與測光設定">
         <div className="deck-head">
           <div className="deck-title-group">
-            <span>⚙ 相機設定、鏡頭與過片模式</span>
+            <span>相機設定、鏡頭與過片模式</span>
             <b>SETTINGS & DRIVE</b>
           </div>
-          <button type="button" className="deck-close-btn" aria-label="關閉面板 P" title="關閉設定面板 (P)" onClick={() => setDeckOpen(false)}>✕</button>
+          <button type="button" className="deck-close-btn" aria-label="關閉面板 P" title="關閉設定面板 (P)" onClick={() => setDeckOpen(false)}>X</button>
         </div>
         <div className="deck-body">
           <div className="deck-grid compact-deck">
@@ -1375,13 +1343,13 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              <p className="drive-buffer-hint">💡 長按快門鍵或空白鍵可進行連續連拍；緩衝記憶體滿載 ({MAX_BUFFER} 張) 時將自動降速寫入。</p>
+              <p className="drive-buffer-hint">長按快門鍵或空白鍵可連續拍攝。緩衝記憶體滿載 ({MAX_BUFFER} 張) 時會自動降速寫入。</p>
             </section>
 
             <section className="lens-section">
               <div className="section-head-row">
                 <span className="section-label">相機鏡頭選擇</span>
-                <span className="lens-spec-tag">F{lensMaxAperture} 最大光圈 · {lens.category === "prime" ? "定焦" : "變焦"}</span>
+                <span className="lens-spec-tag">F{lensMaxAperture} 最大光圈 / {lens.category === "prime" ? "定焦" : "變焦"}</span>
               </div>
               <select
                 aria-label="更換鏡頭"
@@ -1405,8 +1373,8 @@ export default function Home() {
                 </optgroup>
               </select>
               <div className="lens-spec-info">
-                <p><strong>當前視角</strong>：{horizontalFieldOfView(focal).toFixed(1)}° · {lens.category === "prime" ? `固定焦距 ${lens.focals[0]} mm (定焦鏡)` : `支援焦段 ${lens.focals[0]}–${lens.focals[lens.focals.length - 1]} mm (變焦鏡)`} · 光圈 F{lens.maxAperture(focal)}–F{lens.minAperture}</p>
-                <p><strong>規格資訊</strong>：濾鏡 {lens.filter} · 重量 {lens.weight} · {lens.tag}</p>
+                <p><strong>當前視角</strong>：{horizontalFieldOfView(focal).toFixed(1)}° / {lens.category === "prime" ? `固定焦距 ${lens.focals[0]} mm (定焦鏡)` : `支援焦段 ${lens.focals[0]}-${lens.focals[lens.focals.length - 1]} mm (變焦鏡)`} / 光圈 F{lens.maxAperture(focal)}-F{lens.minAperture}</p>
+                <p><strong>規格資訊</strong>：濾鏡 {lens.filter} / 重量 {lens.weight} / {lens.tag}</p>
                 <p className="lens-desc-text"><strong>光學亮點</strong>：{lens.desc}</p>
               </div>
             </section>
@@ -1473,7 +1441,7 @@ export default function Home() {
                   onClick={onToggleMute}
                   aria-pressed={!soundMuted}
                 >
-                  <span aria-hidden="true">{soundMuted ? "🔇 音效已靜音 (按 M 切換)" : "🔊 音效與環境音正常 (按 M 切換)"}</span>
+                  <span>{soundMuted ? "音效已靜音 (按 M 切換)" : "音效與環境音正常 (按 M 切換)"}</span>
                 </button>
               </div>
             </section>
@@ -1481,7 +1449,7 @@ export default function Home() {
             <section className="iso-auto-row">
               <div>
                 <span className="section-label">ISO AUTO</span>
-                <small style={{ color: "#7c817e", fontSize: "10px", display: "block", marginTop: "2px" }}>自動感光度限制 (100–12800)</small>
+                <small className="iso-auto-hint">自動感光度限制 (100-12800)</small>
               </div>
               <button type="button" aria-pressed={usingAutoIso} disabled={mode === "AUTO"} onClick={() => setIsoAuto(v => !v)}>
                 {usingAutoIso ? "開啟" : "關閉"}
@@ -1501,7 +1469,7 @@ export default function Home() {
           </div>
         </div>}
         <div className="camera-dock">
-          <button className="gear-button" type="button" aria-label="相機鏡頭與測光設定" aria-pressed={deckOpen} onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); setActiveControl(null); setDeckOpen(value => !value); }}><span className="gear-icon" aria-hidden="true">⚙</span></button>
+          <button className="gear-button" type="button" aria-label="相機鏡頭與測光設定" aria-pressed={deckOpen} onClick={() => { if (document.pointerLockElement) document.exitPointerLock(); setActiveControl(null); setDeckOpen(value => !value); }}><span className="gear-icon" aria-hidden="true">SET</span></button>
           <button
             className="shutter-button"
             type="button"
@@ -1527,7 +1495,7 @@ export default function Home() {
 
     {!started && <div className="start-screen">
       <div className="start-card">
-        <p className="start-eyebrow">PRO CAMERA SIMULATOR · 互動攝影練習場</p>
+        <p className="start-eyebrow">PRO CAMERA SIMULATOR</p>
         <h1 className="start-title">APERTURE<b>WORLD</b></h1>
         <p className="start-lead">十一個場景，一台全片幅相機。選擇訓練場景、轉動曝光三要素，拍出動人照片。</p>
         <div className="start-scene-section">
@@ -1546,7 +1514,7 @@ export default function Home() {
               >
                 <span className="card-num">{String(idx + 1).padStart(2, "0")}</span>
                 <div className="card-info">
-                  <p className="card-eyebrow">{item.eyebrow}</p>
+                  <p className="card-eyebrow">{scenarioLabel(item.eyebrow)}</p>
                   <strong className="card-title">{item.title}</strong>
                   <small className="card-brief">{item.brief}</small>
                 </div>
@@ -1555,7 +1523,7 @@ export default function Home() {
           </div>
         </div>
         <div className="start-actions" onPointerEnter={() => { void warmCameraExperience(); }} onPointerDown={() => { void warmCameraExperience(); }} onFocus={() => { void warmCameraExperience(); }}>
-          <button className="start-play" type="button" disabled={launching} aria-busy={launching} onClick={() => enterGame(true)}>{launching ? "正在準備相機…" : "進入拍攝 (全螢幕)"}<span aria-hidden="true">⛶</span></button>
+          <button className="start-play" type="button" disabled={launching} aria-busy={launching} onClick={() => enterGame(true)}>{launching ? "正在準備相機…" : "進入拍攝 (全螢幕)"}</button>
           <button className="start-alt" type="button" disabled={launching} onClick={() => enterGame(false)}>直接遊玩</button>
         </div>
         <ul className="start-keys">
@@ -1575,7 +1543,7 @@ export default function Home() {
 
     {fullscreenError && (
       <div className="fullscreen-notice" role="status">
-        <span aria-hidden="true">⛶</span>
+        <span aria-hidden="true">FULL</span>
         <b>無法進入真正全螢幕</b>
         <small>{fullscreenError}</small>
         <button type="button" aria-label="關閉全螢幕提示" onClick={() => setFullscreenError(null)}>×</button>
