@@ -205,9 +205,9 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /aria-label="相機鏡頭與測光設定"/);
   assert.match(page, /aria-label="更換鏡頭"/);
   assert.match(page, /aria-label="測光模式"/);
-  assert.match(page, /24–70 mm F2\.8 II 旗艦標準變焦/);
-  assert.match(page, /70–200 mm F2\.8 II 防手震遠攝變焦/);
-  assert.match(page, /100–400 mm F4\.5–5\.6 防手震超遠攝變焦/);
+  assert.match(page, /24-70 mm F2\.8 II 旗艦標準變焦/);
+  assert.match(page, /70-200 mm F2\.8 II 防手震遠攝變焦/);
+  assert.match(page, /100-400 mm F4\.5-5\.6 防手震超遠攝變焦/);
   assert.match(page, /50 mm F1\.2 頂級旗艦大光圈定焦/);
   assert.match(page, /600 mm F4\.0 飛羽生態終極巨砲/);
   assert.match(page, /value="multi".*多重測光/s);
@@ -559,7 +559,7 @@ test("camera interface CSS stays off the menu path and is ready before entry", a
   assert.match(styleBoundary, /import "\.\/camera\.css"/);
   assert.match(page, /const loadCameraStyles = \(\) => import\("\.\/camera-styles"\)/);
   assert.match(page, /function warmCameraExperience\(\) \{\s*void warmRenderer\(\);\s*return loadCameraStyles\(\);\s*\}/);
-  assert.match(page, /warmCameraExperience\(\)\.then\([\s\S]{0,100}\(\) => \{ setStarted\(true\); setLaunching\(false\); \}/, "camera markup waits for its stylesheet boundary");
+  assert.match(page, /warmCameraExperience\(\)\.then\([\s\S]{0,180}\(\) => \{\s*setStarted\(true\);\s*setLaunching\(false\);/, "camera markup waits for its stylesheet boundary");
   assert.match(page, /onPointerEnter=\{\(\) => \{ void warmCameraExperience\(\); \}\}/, "pointer intent warms both CSS and renderer code");
   assert.match(page, /disabled=\{launching\} aria-busy=\{launching\}/, "entry controls expose and lock their preparation state");
   assert.doesNotMatch(criticalStyles, /\.hud\b|\.gallery\b|\.mobile-console\b|\.af-frame\b/, "camera-only interface selectors must not block the launch menu");
@@ -604,7 +604,8 @@ test("Worker responses retain streaming bodies and receive low-risk production s
   assert.match(worker, /const response = await handler\.fetch\(request, env, ctx\)/, "the application response remains awaited and stream-backed");
   assert.match(worker, /return withSecurityHeaders\(response\)/);
   assert.doesNotMatch(worker, /interface Env|interface ExecutionContext/, "Worker types derive from the Vinext handler instead of drifting hand-written platform types");
-  assert.match(viteConfig, /compatibility_date:\s*"2026-08-10"/, "the Worker compatibility date is explicit and current for this production pass");
+  assert.match(viteConfig, /LOCAL_COMPATIBILITY_DATE = "2026-05-22"/, "local serve uses the locked runtime ceiling");
+  assert.match(viteConfig, /PRODUCTION_COMPATIBILITY_DATE = "2026-08-10"/, "production keeps the reviewed edge compatibility date");
 });
 
 test("fixed light sources still produce view-dependent automatic readings", () => {
@@ -1144,4 +1145,133 @@ test("auto exposure dynamically opens aperture in low light and night scenes and
   assert.match(page, /closestSafeShutter\(shutterOptions, \(a \*\* 2\) \/ Math\.pow\(2, evIso100\), safeShutter\)/, "P mode with manual ISO still obeys the safety shutter");
   assert.match(page, /closestSafeShutter\(shutterOptions, \(a \*\* 2\) \/ Math\.pow\(2, targetEv \+ Math\.log2\(i \/ 100\)\), safeShutter\)/, "A mode with manual ISO still obeys the safety shutter");
   assert.doesNotMatch(page, /darkShutter/, "reaching the Auto ISO ceiling must not override the safety shutter");
+});
+
+test("all 12 camera audio WAV sound files are present in public/sounds/ with valid RIFF headers and PCM data", async () => {
+  const soundNames = [
+    "shutter.wav",
+    "shutter_open.wav",
+    "shutter_close.wav",
+    "burst.wav",
+    "af_beep.wav",
+    "dial.wav",
+    "zoom.wav",
+    "mode.wav",
+    "power_on.wav",
+    "warning.wav",
+    "delete.wav",
+    "photo_slide.wav",
+  ];
+
+  for (const name of soundNames) {
+    const filePath = new URL(`../public/sounds/${name}`, import.meta.url);
+    const buf = await readFile(filePath);
+    assert.ok(buf.length > 44, `${name} must be a valid non-empty WAV file`);
+    assert.equal(buf.subarray(0, 4).toString("ascii"), "RIFF", `${name} must have RIFF header`);
+    assert.equal(buf.subarray(8, 12).toString("ascii"), "WAVE", `${name} must have WAVE format`);
+    assert.equal(buf.subarray(12, 16).toString("ascii"), "fmt ", `${name} must have fmt subchunk`);
+    // 16-bit PCM, 44100Hz
+    assert.equal(buf.readUInt16LE(20), 1, `${name} must be uncompressed PCM`);
+    assert.equal(buf.readUInt32LE(24), 44100, `${name} must have 44.1kHz sample rate`);
+    assert.equal(buf.readUInt16LE(34), 16, `${name} must be 16-bit audio`);
+  }
+});
+
+test("the audio engine provides zero-latency SFX and 11-scene ambient soundscapes with mute and accessibility controls", async () => {
+  const audioModuleSource = await readFile(new URL("../app/audio.ts", import.meta.url), "utf8");
+  const audioLoaderSource = await readFile(new URL("../app/audio-loader.ts", import.meta.url), "utf8");
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const librarySource = await readFile(new URL("../app/photo-library.tsx", import.meta.url), "utf8");
+
+  // Verify all 11 scene soundscapes are handled in audio.ts
+  for (const key of SCENE_KEYS) {
+    assert.ok(
+      audioModuleSource.includes(`sceneKey === "${key}"`),
+      `audio engine must provide soundscape generator for scene: ${key}`
+    );
+  }
+
+  // Verify all essential audio functions are exported
+  const expectedExports = [
+    "playShutter",
+    "playShutterOpen",
+    "playShutterClose",
+    "playBurstClick",
+    "playAfLock",
+    "playDialClick",
+    "playZoomTick",
+    "playModeDial",
+    "playPowerOn",
+    "playWarning",
+    "playDelete",
+    "playPhotoSlide",
+    "startSceneAmbience",
+    "stopSceneAmbience",
+    "pauseSceneAmbience",
+    "resumeSceneAmbience",
+    "setSoundMuted",
+    "isSoundMuted",
+    "toggleSoundMuted",
+    "unlockAudio",
+  ];
+
+  for (const fn of expectedExports) {
+    assert.ok(
+      audioModuleSource.includes(`export const ${fn}`),
+      `audio.ts must export ${fn}`
+    );
+  }
+
+  // Verify page and library integration
+  assert.match(pageSource, /<button[^>]*class(Name)?="[^"]*sound-button/, "HUD includes sound toggle button");
+  assert.match(pageSource, /KeyM/, "Keyboard shortcut M is bound to mute toggle");
+  assert.match(pageSource, /playAfLock()/, "AF sharp lock triggers audio confirmation");
+  assert.match(pageSource, /playPowerOn()/, "Game entry triggers power-on camera audio");
+  assert.match(librarySource, /playPhotoSlide()/, "Photo library slide triggers photo flip audio");
+  assert.match(librarySource, /playDelete()/, "Photo deletion triggers delete audio");
+
+  // The implementation must stay behind one race-safe demand boundary. The
+  // lightweight facade may be static, but audio.ts itself cannot be a static
+  // dependency of either the page or the deferred library.
+  assert.doesNotMatch(pageSource, /from "\.\/audio"/, "the page must not statically import the audio engine");
+  assert.doesNotMatch(librarySource, /from "\.\/audio"/, "the photo library must not statically import the audio engine");
+  assert.match(pageSource, /from "\.\/audio-loader"/, "page audio calls use the demand facade");
+  assert.match(librarySource, /from "\.\/audio-loader"/, "library audio calls share the same demand facade");
+  assert.match(audioLoaderSource, /let audioSystemPromise: Promise<AudioSystem> \| null = null/, "concurrent first-use calls share one import promise");
+  assert.match(audioLoaderSource, /audioSystemPromise = import\("\.\/audio"\)\.then/, "only first use imports the audio implementation");
+  assert.match(audioLoaderSource, /else if \(audioSystemPromise\)/, "visibility and home cleanup follow an in-flight entry without starting a launch-screen download");
+  assert.match(audioLoaderSource, /unlockedAudioContext = new AudioCtx\(\)/, "camera entry creates the browser audio context synchronously inside user activation");
+  assert.match(audioLoaderSource, /system\.initializeAudioContext\(unlockedAudioContext\)/, "the demand-loaded engine adopts that already-unlocked context");
+
+  const manifestSource = await readFile(new URL("../dist/server/vinext-client-assets.js", import.meta.url), "utf8");
+  const manifest = JSON.parse(manifestSource.replace(/^export default /, "").replace(/;\s*$/, ""));
+  const pageEntry = Object.entries(manifest.dynamicPreloads).find(([key]) => key === "app/page.tsx" || key.endsWith("/app/page.tsx"));
+  const libraryEntry = Object.entries(manifest.dynamicPreloads).find(([key]) => key === "app/photo-library.tsx" || key.endsWith("/app/photo-library.tsx"));
+  assert.ok(pageEntry, "the production manifest must describe the page dependency path");
+  assert.ok(libraryEntry, "the production manifest must describe the photo-library dependency path");
+  assert.equal(pageEntry[1].some(asset => /\/audio-(?!loader-)[^/]+\.js$/.test(asset)), false, "audio.ts must be absent from the initial page dependency path");
+  assert.equal(libraryEntry[1].some(asset => /\/audio-(?!loader-)[^/]+\.js$/.test(asset)), false, "opening the library must reuse the demand facade without preloading audio.ts");
+
+  const chunkRoot = new URL("../dist/client/_next/static/chunks/", import.meta.url);
+  const chunkNames = (await readdir(chunkRoot)).filter(name => name.endsWith(".js"));
+  const artifacts = await Promise.all(chunkNames.map(async name => ({ name, source: await readFile(new URL(name, chunkRoot), "utf8") })));
+  const pageArtifact = artifacts.find(artifact => /^page-.*\.js$/.test(artifact.name));
+  const audioArtifact = artifacts.find(artifact => artifact.source.includes("aperture_world_sound_muted") && artifact.source.includes("shutter_open"));
+  assert.ok(pageArtifact, "the production page chunk must exist");
+  assert.ok(audioArtifact, "the audio engine must emit as its own demand chunk");
+  assert.notEqual(pageArtifact.name, audioArtifact.name, "audio implementation cannot fold back into the initial page chunk");
+  assert.doesNotMatch(await (await render()).text(), new RegExp(audioArtifact.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the server-rendered menu must not advertise the audio chunk");
+});
+
+test("local serve and production Worker use their verified compatibility dates", async () => {
+  const [viteConfig, packageLock, generatedConfig] = await Promise.all([
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
+    readFile(new URL("../dist/server/wrangler.json", import.meta.url), "utf8"),
+  ]);
+  assert.match(packageLock, /"miniflare": "4\.20260515\.0"/, "the lockfile keeps the verified Miniflare build");
+  assert.match(viteConfig, /LOCAL_COMPATIBILITY_DATE = "2026-05-22"/, "local serve uses the maximum date supported by its locked runtime");
+  assert.match(viteConfig, /PRODUCTION_COMPATIBILITY_DATE = "2026-08-10"/, "production retains the reviewed edge date");
+  assert.match(viteConfig, /command === "serve"[\s\S]{0,120}LOCAL_COMPATIBILITY_DATE[\s\S]{0,120}PRODUCTION_COMPATIBILITY_DATE/, "Vite command selects local versus production compatibility explicitly");
+  assert.equal(JSON.parse(generatedConfig).compatibility_date, "2026-08-10", "the deployable generated Worker config carries the production date");
 });
