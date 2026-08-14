@@ -205,9 +205,9 @@ test("finished product renders a real 3D world, mobile controls, fullscreen, and
   assert.match(page, /aria-label="相機鏡頭與測光設定"/);
   assert.match(page, /aria-label="更換鏡頭"/);
   assert.match(page, /aria-label="測光模式"/);
-  assert.match(page, /24–70 mm F2\.8 II 旗艦標準變焦/);
-  assert.match(page, /70–200 mm F2\.8 II 防手震遠攝變焦/);
-  assert.match(page, /100–400 mm F4\.5–5\.6 防手震超遠攝變焦/);
+  assert.match(page, /24-70 mm F2\.8 II 旗艦標準變焦/);
+  assert.match(page, /70-200 mm F2\.8 II 防手震遠攝變焦/);
+  assert.match(page, /100-400 mm F4\.5-5\.6 防手震超遠攝變焦/);
   assert.match(page, /50 mm F1\.2 頂級旗艦大光圈定焦/);
   assert.match(page, /600 mm F4\.0 飛羽生態終極巨砲/);
   assert.match(page, /value="multi".*多重測光/s);
