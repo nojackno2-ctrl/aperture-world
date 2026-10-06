@@ -1,5 +1,9 @@
 # AI Handoff
 
+## 2026-10-06 Claude: add CI
+
+- Added `.github/workflows/ci.yml` (npm ci, lint, test incl. production build; Node 24, ubuntu). Local: lint exit 0, 33/33 tests. CI not yet observed on GitHub.
+
 ## 2026-10-05 Codex: automatic local commit policy
 
 - User authorized automatic local commits without further confirmation; AGENTS.md now records the standing policy. Push/release/history changes require separate authorization.
