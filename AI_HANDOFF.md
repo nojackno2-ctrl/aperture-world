@@ -1,5 +1,24 @@
 # AI Handoff
 
+## 2026-10-14 Antigravity: automatic commit and push to GitHub policy
+
+- User authorized automatic local commits and automatic push to GitHub for all projects; AGENTS.md now records the standing policy. A Git post-commit hook has been installed in `.git/hooks/post-commit` to automatically push the current branch to `origin` upon commit. Destructive operations (force-push, release, merge, rebase, reset, branch deletion) still require separate authorization.
+- Evidence: inspected branches, git remotes, and status across all repositories. Verified hook execution on Windows Git. Pushed existing unpushed commits where applicable.
+- Verification: git status clean, post-commit hook configured and tested, collaboration rules updated.
+- Status: auto-push policy established and active.
+
+## 2026-10-06 Claude: add CI
+
+- Added `.github/workflows/ci.yml` (npm ci, lint, test incl. production build; Node 24, ubuntu). Local: lint exit 0, 33/33 tests. CI not yet observed on GitHub.
+
+## 2026-10-05 Codex: automatic local commit policy
+
+- User authorized automatic local commits without further confirmation; AGENTS.md now records the standing policy. Push/release/history changes require separate authorization.
+- Evidence: inspected branch, git status, git diff, and git log; reviewed collaboration rules and handoff. The initial working tree was clean; this task changes collaboration documentation only.
+- Verification: full staged git diff --cached --check passed; automatic commit wording and remaining authorization limits were checked. Documentation-only work; no build/runtime validation was needed.
+- Status: automatic commit policy established; this record accompanies the authorized local snapshot. No build/test or runtime behavior is claimed by this snapshot task.
+
+
 ## Product UI redesign (2026-08-13, in progress)
 
 - Scope is a preserve-mode redesign of the complete photography simulator UI. Core 3D rendering, camera data flow, route structure, capture semantics, fixed-centre AF behavior, and desktop/mobile control meaning must remain unchanged.
