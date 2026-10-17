@@ -1,5 +1,14 @@
 # AI Handoff
 
+## 2026-10-17 Antigravity: Rust rewrite audit & release readiness evidence
+
+- **Task**: Audit repository for Rust migration feasibility, release readiness, branch ancestry, and CI/verification status.
+- **Repository type**: Web Application (React 19, Three.js 3D viewport, Next.js / Vinext RSC, Tailwind CSS, Cloudflare Worker). Not a compiled binary/EXE project.
+- **Git & Release state**: HEAD `f91f1e6` on `main`, clean working tree. Up-to-date with `origin/main`. No branch divergence. No GitHub releases published yet (`gh release list` empty). Next appropriate version is `v0.1.0` matching `package.json` (`0.1.0`). All commits are unreleased.
+- **Rust feasibility**: High complexity. To run in browser, requires WebAssembly rewrite using Rust 3D rendering engines (e.g. `wgpu` or `bevy` webgl/webgpu target), `web-sys` (Canvas, AudioContext), and Yew/Leptos/Dioxus for HUD UI; or a native desktop photography simulator app using Bevy/wgpu. Migration risk is very high due to rewriting complex Three.js shaders, optics/bokeh post-processing passes, responsive mobile touch controls, and SSR pipeline.
+- **Verification**: `npm run lint` (eslint) exit 0; `npm test` (vinext build + 33 node:test suites) passed 33/33 in 452ms. GitHub Actions CI passing.
+- **Status**: Audit complete. No Git/release mutations performed (parent owns mutations).
+
 ## 2026-10-14 Antigravity: automatic commit and push to GitHub policy
 
 - User authorized automatic local commits and automatic push to GitHub for all projects; AGENTS.md now records the standing policy. A Git post-commit hook has been installed in `.git/hooks/post-commit` to automatically push the current branch to `origin` upon commit. Destructive operations (force-push, release, merge, rebase, reset, branch deletion) still require separate authorization.
